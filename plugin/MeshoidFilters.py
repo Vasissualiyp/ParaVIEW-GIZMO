@@ -22,6 +22,7 @@ from vtkmodules.vtkCommonDataModel import (  # noqa: E402
 from vtkmodules.vtkCommonExecutionModel import vtkStreamingDemandDrivenPipeline as SDDP  # noqa: E402
 
 from pvgizmo import meshoid_ops as mo  # noqa: E402  (imports pvgizmo first: multiprocessing fix)
+from pvgizmo import live as _live  # noqa: E402
 from pvgizmo import vtkconv  # noqa: E402
 
 DES_NGB = 32  # meshoid / GIZMO default neighbour number, for volumes when Density is missing
@@ -100,6 +101,13 @@ class _MeshoidImageFilter(VTKPythonAlgorithmBase):
         self._center = [0.0, 0.0, 0.0]
         self._size = 1.0
         self._res = 256
+        # GUI (builtin session): install the FollowCamera auto-linker on first use. At plugin
+        # import there is no session yet; here there is, and the proxy is not registered yet,
+        # so the registration observer still catches this very filter.
+        try:
+            _live.enable_auto_follow()
+        except Exception:
+            pass
 
     def FillInputPortInformation(self, port, info):
         info.Set(self.INPUT_REQUIRED_DATA_TYPE(), "vtkDataObject")
@@ -222,6 +230,13 @@ class MeshoidProjection(_MeshoidImageFilter):
     def SetMode(self, m):
         self._set("_mode", int(m))
 
+    @smproperty.xml(_bool_xml(
+        "FollowCamera", "SetFollowCamera", 1,
+        "GUI: keep this projection aimed at the render view's camera (direction, centre, zoom), "
+        "updating as you rotate/zoom/pan. Overrides Normal/ViewUp/Center/Size/AutoWindow."))
+    def SetFollowCamera(self, v):
+        self._follow = bool(v)  # acted on by the client (pvgizmo.live); nothing to do here
+
     @smproperty.doublevector(name="Depth", default_values=0.0)
     def SetDepth(self, d):
         self._set("_depth", float(d))
@@ -257,6 +272,7 @@ class MeshoidProjection(_MeshoidImageFilter):
                          field=f, masses=m, volume=vol, smooth_fac=self._smooth, depth=self._depth,
                          conservative=self._conservative)
         self._emit(outInfoVec, img, f"{mode}({name})", center, size)
+        _live.debug_log("exec", filter="projection", normal=list(self._normal), res=self._res)
         return 1
 
 
@@ -284,6 +300,12 @@ class MeshoidSlice(_MeshoidImageFilter):
 </IntVectorProperty>""")
     def SetOrder(self, o):
         self._set("_order", int(o))
+
+    @smproperty.xml(_bool_xml(
+        "FollowCamera", "SetFollowCamera", 0,
+        "GUI: keep the slice through the focal point, facing the camera, as the view moves."))
+    def SetFollowCamera(self, v):
+        self._follow = bool(v)
 
     @smproperty.xml(_bool_xml("SlopeLimiter", "SetSlopeLimiter", 0,
                               "Barth-Jespersen limiter on the gradient (as in GIZMO), order >= 1."))

@@ -19,10 +19,13 @@ pvgizmo/             pure-Python core, no ParaView dependency except vtkconv (VT
   meshoid_ops.py     view bases, projections/slices at any orientation, Meshoid LRU cache
   pvhelpers.py       client-side: open_snapshot, show_particles, add_projection,
                      project_along_camera, show_map (needs paraview.simple)
+  live.py            client-side camera links: maps follow the view (rotate/zoom/pan), low-res
+                     while dragging; auto-installed in the GUI for FollowCamera=1
 plugin/              ParaView Python plugins (auto-loaded via PV_PLUGIN_PATH in the shell)
   GIZMOReader.py     "GIZMO Snapshot Reader" -> vtkPartitionedDataSetCollection
   MeshoidFilters.py  "Meshoid Projection", "Meshoid Slice" (menu: Filters > GIZMO) -> 2D vtkImageData
-macros/              ParaView macros (Macros > Import new macro): ProjectAlongCamera, GIZMOQuickLook
+macros/              ParaView macros (Macros > Import new macro): ProjectAlongCamera,
+                     ToggleFollowCamera, GIZMOQuickLook
 tests/               pytest; snapgen.py writes synthetic GIZMO snapshots
 meshoid/             git-ignored local clone (pinned; recreated by the shellHook)
 ```
@@ -49,8 +52,13 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
 - `test_meshoid_ops.py` checks every projection mode against meshoid's own
   methods, rotated views against permuted data, exact mass conservation,
   and slice geometry.
-- `test_reader_pv.py` / `test_filters_pv.py` cover the plugins through the
-  server manager.
+- `test_reader_pv.py` / `test_filters_pv.py` / `test_live_pv.py` cover the
+  plugins and camera links through the server manager.
+- `test_gui.py::test_live_mouse_drag` starts the GUI with `tests/gui_live.py`
+  (no `--exit`, so the Qt loop runs) and **drags the real mouse with xdotool**
+  (`tests/gui_drag.sh`). It asserts on the JSON events that `pvgizmo.live`
+  and the filter write to `$PV_GIZMO_LIVE_LOG`. This is the interactivity
+  regression test: keep it green.
 - `test_gui.py` runs the real Qt client under `xvfb-run`
   (`tests/gui_smoke.py`). It takes about 10 s. Set `PV_GIZMO_KEEP_SHOT=x.png`
   to keep the screenshot.
@@ -126,6 +134,19 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
 - `paraview.util.vtkAlgorithm` decorators take the number of elements from
   the method signature. Wrappers with `*args` need an explicit
   `number_of_elements`.
+- **Interactivity (`pvgizmo.live`)** runs on the *client*. It observes the
+  camera's ModifiedEvent (ignoring clipping-range-only changes, never
+  re-entering), and Start/EndInteractionEvent on **the view proxy** (the Qt
+  GUI reports them there, not on `view.GetInteractor()`). It sets filter
+  properties before the frame renders. GUI detection is `live.in_gui()`
+  (`/proc/self/exe`; override with `PV_GIZMO_AUTO_FOLLOW`). The auto-linker
+  is installed from the filter constructor, because at plugin import there
+  is no session yet. pvpython never auto-follows, so scripted windows are
+  never overridden.
+- `Delete(proxy)` leaves a usable-looking Python object behind. Check
+  liveness with `ProxyManager().SMProxyManager.IsProxyInGroup(p.SMProxy, "sources")`.
+- `Xvfb` itself is not on PATH, only `xvfb-run`. Run multi-process GUI tests
+  inside one `xvfb-run` (see `tests/gui_drag.sh`).
 - Point Gaussian properties in 6.0: `SetScaleArray`, `ScaleByArray`,
   `UseScaleFunction`, `GaussianRadius`, `ShaderPreset`. There is no
   `ScaleArray`.

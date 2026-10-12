@@ -179,4 +179,11 @@ Important limits:
 - **Colour maps:** collapsing clouds span about 8 decades in column density.
   A fixed "max/1e4" log range gives a black image, so `pvhelpers.show_map`
   uses the 1st–99.9th percentiles of positive pixels.
+- **Live view-dependent projections (verified with real mouse drags).** In the
+  GUI, `pvgizmo.live` keeps FollowCamera projections and slices aimed at the
+  camera: centre = focal point, normal toward the camera, size = visible
+  extent at the focal plane (covering the wider viewport side). While dragging
+  they run at 128²; on release they run once at full resolution. The xdotool
+  test saw 20 projections during a 10-step drag, then one full-resolution
+  run. Mouse start/end events arrive on the view proxy.
 

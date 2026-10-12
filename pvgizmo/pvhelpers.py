@@ -108,14 +108,25 @@ def show_map(filt, view=None, log=True, preset="Inferno (matplotlib)", percentil
     return rep
 
 
-def add_projection(source, block="Gas", field="Masses", mode="Surface density", view=None, **props):
-    """Meshoid Projection of `field` and show it; extra props are passed to the filter."""
+def add_projection(source, block="Gas", field="Masses", mode="Surface density", view=None,
+                   follow=False, **props):
+    """Meshoid Projection of `field` and show it; extra props are passed to the filter.
+
+    follow=True keeps it aimed at the view's camera (pvgizmo.live); in the GUI this
+    happens automatically for FollowCamera=1 (the default).
+    """
     p = pvs.MeshoidProjection(Input=source, Block=block, Field=["POINTS", field], Mode=mode, **props)
+    if follow:
+        from pvgizmo import live
+        live.follow_camera(p, view)
     show_map(p, view)
     return p
 
 
-def add_slice(source, block="Gas", field="Density", view=None, **props):
+def add_slice(source, block="Gas", field="Density", view=None, follow=False, **props):
     s = pvs.MeshoidSlice(Input=source, Block=block, Field=["POINTS", field], **props)
+    if follow:
+        from pvgizmo import live
+        live.follow_camera(s, view)
     show_map(s, view)
     return s

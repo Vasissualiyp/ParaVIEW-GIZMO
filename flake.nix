@@ -34,6 +34,7 @@
             hdf5
             git
             xvfb-run   # headless GUI tests: xvfb-run -a paraview --script=... --exit
+            xdotool    # real mouse drags in the headless GUI interactivity test
           ];
 
           shellHook = ''
