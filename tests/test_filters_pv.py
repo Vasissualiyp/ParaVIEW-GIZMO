@@ -55,7 +55,7 @@ def test_projection_matches_core_and_geometry(reader, snapdir):
     p = pvs.MeshoidProjection(Input=reader, Normal=n, ViewUp=up, AutoWindow=0, Center=[0.1, 0, -0.2],
                               Size=4.0, Resolution=48)
     img, name, v = image(p)
-    assert name == "SurfaceDensity(Masses)" and img.GetDimensions() == (48, 48, 1)
+    assert name == "SurfaceDensity_Masses" and img.GetDimensions() == (48, 48, 1)
     d = gas(snapdir)
     ref = mo.project("SurfaceDensity", d["Coordinates"], d["SmoothingLength"], [0.1, 0, -0.2], 4.0, 48,
                      normal=n, view_up=up, field=d["Masses"])
@@ -91,7 +91,7 @@ def test_slice_matches_core(reader, snapdir):
     s = pvs.MeshoidSlice(Input=reader, Normal=[0, 1, 1], ViewUp=[1, 0, 0], Order=1, Resolution=40,
                          AutoWindow=0, Center=[0, 0, 0], Size=2.0)
     _, name, v = image(s)
-    assert name == "Slice(Density)"
+    assert name == "Slice_Density"
     from meshoid import Meshoid
     d = gas(snapdir)
     M = Meshoid(d["Coordinates"].astype(np.float64), d["Masses"].astype(np.float64),
@@ -132,3 +132,13 @@ def test_project_along_camera(reader):
     img, _, _ = image(p)
     b = img.GetBounds()  # image lies in the plane y = 0, facing the camera
     assert b[2] == pytest.approx(0, abs=1e-12) and b[3] == pytest.approx(0, abs=1e-12)
+
+
+def test_field_placeholder_falls_back_to_default(snapdir):
+    """Created before the input ran (scripts): the domain gives '0'; use the default array."""
+    r = pvs.GIZMOSnapshotReader(FileNames=[f"{snapdir}/single/snapshot_000.hdf5"])  # not run yet
+    p = pvs.MeshoidProjection(Input=r, Resolution=16)
+    s = pvs.MeshoidSlice(Input=r, Resolution=16)
+    for f, want in ((p, "SurfaceDensity_Masses"), (s, "Slice_Density")):
+        f.UpdatePipeline()
+        assert f.PointData.keys() == [want]

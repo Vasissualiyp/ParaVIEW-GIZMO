@@ -16,14 +16,17 @@ flake.nix            nix dev shell: ParaView 6.0.1 + meshoid deps + C++ toolchai
 pvgizmo/             pure-Python core, no ParaView dependency except vtkconv (VTK only)
   io.py              snapshot discovery, headers, field lists, strided/cropped reads, units
   vtkconv.py         numpy -> vtkPolyData / vtkImageData (zero-copy)
-  meshoid_ops.py     view bases, projections/slices at any orientation, Meshoid LRU cache
+  meshoid_ops.py     view bases, projections/slices at any orientation, 3D grids, derived
+                     fields, Meshoid LRU cache
+  deposit.py         numba 3D kernel deposition, correct for kernels crossing the box (zoom data)
   pvhelpers.py       client-side: open_snapshot, show_particles, add_projection,
                      project_along_camera, show_map (needs paraview.simple)
   live.py            client-side camera links: maps follow the view (rotate/zoom/pan), low-res
                      while dragging; auto-installed in the GUI for FollowCamera=1
 plugin/              ParaView Python plugins (auto-loaded via PV_PLUGIN_PATH in the shell)
   GIZMOReader.py     "GIZMO Snapshot Reader" -> vtkPartitionedDataSetCollection
-  MeshoidFilters.py  "Meshoid Projection", "Meshoid Slice" (menu: Filters > GIZMO) -> 2D vtkImageData
+  MeshoidFilters.py  Filters > GIZMO: "Meshoid Projection", "Meshoid Slice" (2D vtkImageData),
+                     "Meshoid Grid" (3D vtkImageData), "Meshoid Derived Fields" (particles)
 macros/              ParaView macros (Macros > Import new macro): ProjectAlongCamera,
                      ToggleFollowCamera, GIZMOQuickLook
 tests/               pytest; snapgen.py writes synthetic GIZMO snapshots
@@ -91,6 +94,13 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
   than float32 spacing at their absolute position, and rendering is float32.
   Anything new must work in this recentred frame. Don't cast absolute
   coordinates to float32.
+- **Array names** are Calculator-friendly: `<Mode>_<Field>`, `Slice_<Field>`,
+  `GridDensity_<Field>`, `Interp_<Field>`, `grad_/div_/curl_<Field>`, and
+  `log10_` prefixes. No parentheses.
+- **Never deposit with meshoid's `GridDensity` / conservative 2D core on
+  windows that cut kernels.** They renormalise onto in-box nodes (see
+  FINDINGS). Use `pvgizmo.deposit` / `meshoid_ops.grid3d_deposit`. 3D nodes
+  coincide with the 2D map nodes.
 - **Image grids:** projections and slices use meshoid's non-periodic
   *node* grid, `linspace(-size/2, size/2, res)` along the image axes u and v.
   The view basis is right-handed (u, v, n), with n the line of sight and
@@ -129,6 +139,10 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
     timeout. `timeout xvfb-run ...` leaves orphaned `paraview`/`Xvfb`
     processes behind. Clean up with `pkill -x .paraview-wrapp; pkill -x Xvfb`.
     Don't use `pkill -f` with a pattern that also matches your own shell.
+- No `<` or `>` in plugin XML strings, including Documentation. The proxy
+  silently fails to register (`test_all_proxies_registered`).
+- Volume rendering ignores log-scaled colour maps. Render `log10_*` arrays
+  instead (`pvhelpers.show_volume`).
 - A filter's array-selection default only applies if its input has already
   run. Call `reader.UpdatePipeline()` before creating filters in scripts.
 - `paraview.util.vtkAlgorithm` decorators take the number of elements from

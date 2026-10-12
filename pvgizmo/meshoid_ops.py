@@ -102,10 +102,21 @@ def project(mode, pos, h, center, size, res, normal=(0, 0, 1), view_up=(0, 1, 0)
     if mode == "SurfaceDensity":
         if field is None:
             raise ValueError("SurfaceDensity needs a field (e.g. Masses)")
-        if conservative:  # conservative deposition exists for the single-channel routine only
+        if conservative:
+            # meshoid's conservative core renormalises a kernel over its in-window pixels
+            # (dumping the whole mass of an edge-crossing particle inside) and allocates
+            # (2H/dx)^2 per particle: use it only for kernels fully inside the window; the
+            # others go through the non-renormalised routine (correct partial deposit).
             from meshoid.grid_deposition import GridSurfaceDensity
-            out = np.stack([GridSurfaceDensity(f[:, k], x, h, origin, size, res, conservative=True, **kw)
-                            for k in range(f.shape[1])], axis=-1)
+            inside = np.all(np.abs(x[:, :2]) + h[:, None] < size / 2, axis=1)
+            out = np.zeros((res, res, f.shape[1]))
+            for k in range(f.shape[1]):
+                if inside.any():
+                    out[..., k] += GridSurfaceDensity(f[inside, k], x[inside], h[inside], origin, size, res,
+                                                      conservative=True, **kw)
+                if (~inside).any():
+                    out[..., k] += GridSurfaceDensity(f[~inside, k], x[~inside], h[~inside], origin, size,
+                                                      res, conservative=False, **kw)
         else:
             out = GridSurfaceDensityMulti(f, x, h, origin, size, res, **kw)
     elif mode == "LineIntegral":
@@ -169,3 +180,95 @@ def image_geometry(center, size, res, normal=(0, 0, 1), view_up=(0, 1, 0)):
     origin = np.asarray(center, dtype=np.float64) + s0 * basis[0] + s0 * basis[1]
     dx = size / (res - 1)
     return origin, (dx, dx, dx), basis.T
+
+
+# ----------------------------------------------------------------------------- 3D grids
+def grid3d_points(center, size, res):
+    """(res^3, 3) node positions, index (i, j, k) in C order (k fastest), axis-aligned."""
+    s = grid_coords(size, res)
+    X, Y, Z = np.meshgrid(s, s, s, indexing="ij")
+    return np.asarray(center, dtype=np.float64) + np.c_[X.ravel(), Y.ravel(), Z.ravel()]
+
+
+def grid3d_geometry(center, size, res):
+    """origin, spacing of the axis-aligned node grid (same nodes as the 2D maps)."""
+    dx = size / (res - 1)
+    return np.asarray(center, dtype=np.float64) - size / 2, (dx, dx, dx)
+
+
+def grid3d_deposit(pos, h, field, center, size, res, parallel=True):
+    """Density of conserved per-particle `field` on a res^3 node grid; (res,res,res[,k]).
+
+    Nodes coincide with the 2D projection/slice nodes (center - size/2 + k dx,
+    dx = size/(res-1)). Kernels are clipped to >= 1 voxel like Meshoid.DepositToGrid.
+    Uses pvgizmo.deposit, not meshoid's GridDensity: that one renormalises kernels
+    that cross the box boundary onto the in-box nodes (dumping their whole mass
+    inside) and allocates (2H/dx)^3 per particle -- both fatal on zoom data. For
+    kernels inside the box the result is identical to meshoid's, and exactly
+    mass-conserving (to ~1e-4 for kernels wider than 15 voxels).
+    """
+    from pvgizmo.deposit import deposit3d
+    dx = size / (res - 1)
+    x = np.asarray(pos, dtype=np.float64)
+    h = np.clip(np.asarray(h, dtype=np.float64), dx, None)
+    f, tail = _channels(field)
+    origin = np.asarray(center, dtype=np.float64) - size / 2
+    nthreads = None if parallel else 1
+    out = np.stack([deposit3d(f[:, k], x, h, origin, dx, res, nthreads=nthreads)
+                    for k in range(f.shape[1])], axis=-1)
+    return out.reshape((res, res, res) + tail)
+
+
+def safe_log10(values):
+    """log10 with non-positive entries set one decade below the smallest positive value."""
+    v = np.asarray(values, dtype=np.float64)
+    pos = v[v > 0]
+    floor = pos.min() / 10 if pos.size else 1e-300
+    return np.log10(np.where(v > 0, v, floor))
+
+
+def grid3d_interp(meshoid, field, center, size, res, order=0, slope_limiter=False):
+    """Intensive `field` reconstructed at the res^3 nodes; (res,res,res[,k])."""
+    f = np.asarray(field, dtype=np.float64)
+    vals = meshoid.Reconstruct(f, grid3d_points(center, size, res), order=order, slope_limiter=slope_limiter)
+    return vals.reshape((res, res, res) + f.shape[1:])
+
+
+# ----------------------------------------------------------------------------- derived fields
+DERIVED = ("KernelRadius", "Density", "Volume", "Gradient", "DivCurl", "KernelAverage", "KernelStd")
+
+
+def derived_fields(meshoid, field=None, name="f", which=("Density", "Gradient"), gradient_order=1):
+    """Per-particle derived quantities from meshoid; returns {array name: (N, ...) array}.
+
+    NB: anything needing neighbours makes meshoid recompute (and overwrite) its kernel
+    radius/density/volume with its own des_ngb estimate, so these come out under
+    Meshoid* names, distinct from GIZMO's SmoothingLength/Density.
+    """
+    M, out = meshoid, {}
+    need_field = {"Gradient", "DivCurl", "KernelAverage", "KernelStd"} & set(which)
+    f = None if field is None else np.asarray(field, dtype=np.float64)
+    if need_field and f is None:
+        raise ValueError(f"{sorted(need_field)} need a field")
+    if "Gradient" in which:
+        g = M.D(f, order=gradient_order)
+        out[f"grad_{name}"] = g.reshape(len(g), -1)  # vector field: 9 comps, [i*3 + k] = d f_i / d x_k
+    if "DivCurl" in which:
+        if f.ndim != 2 or f.shape[1] != 3:
+            raise ValueError("divergence/curl need a 3-component vector field")
+        out[f"div_{name}"] = M.Div(f)
+        out[f"curl_{name}"] = M.Curl(f)
+    if "KernelAverage" in which:
+        # meshoid's KernelAverage is scalar-only (einsum "ij,ij->i"): do vectors per component
+        out[f"KernelAverage_{name}"] = (M.KernelAverage(f) if f.ndim == 1 else
+                                         np.stack([M.KernelAverage(f[:, k]) for k in range(f.shape[1])], 1))
+    if "KernelStd" in which:
+        out[f"KernelStd_{name}"] = M.KernelVariance(f)  # meshoid returns the std despite the name
+    # after any neighbour access these are meshoid's own (des_ngb) estimates
+    if "KernelRadius" in which:
+        out["MeshoidKernelRadius"] = np.asarray(M.SmoothingLength(), dtype=np.float64)
+    if "Density" in which:
+        out["MeshoidDensity"] = np.asarray(M.Density(), dtype=np.float64)
+    if "Volume" in which:
+        out["MeshoidVolume"] = np.asarray(M.Volume(), dtype=np.float64)
+    return out

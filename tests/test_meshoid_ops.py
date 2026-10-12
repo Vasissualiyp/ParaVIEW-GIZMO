@@ -146,3 +146,107 @@ def test_cache_lru(cloud):
 def test_auto_extent(cloud):
     c, size = mo.auto_extent(cloud["pos"])
     assert np.allclose(c, np.median(cloud["pos"], axis=0)) and size > 0
+
+
+# ----------------------------------------------------------------------------- Phase 3
+def test_grid3d_deposit_conserves_and_aligns_with_2d(cloud):
+    pos, H, m = cloud["pos"], cloud["H"], cloud["m"]
+    size, res = 40.0, 41
+    dx = size / (res - 1)
+    inside = np.all(np.abs(pos) + np.maximum(H, dx)[:, None] < size / 2 - dx, axis=1)
+    rho = mo.grid3d_deposit(pos[inside], H[inside], m[inside], np.zeros(3), size, res)
+    assert rho.shape == (res, res, res)
+    assert rho.sum() * dx**3 == pytest.approx(m[inside].sum(), rel=1e-10)
+    # a compact particle on node (k, j, l) lands on that node, like the 2D maps
+    nodes = mo.grid_coords(2.0, 21)
+    x = np.array([[nodes[5], nodes[13], nodes[8]]])
+    g = mo.grid3d_deposit(x, np.array([0.25]), np.ones(1), np.zeros(3), 2.0, 21)
+    c = [(g.sum(axis=tuple(a for a in range(3) if a != ax)) * np.arange(21)).sum() / g.sum() for ax in range(3)]
+    np.testing.assert_allclose(c, [5, 13, 8], atol=1e-6)
+    sd = mo.project("SurfaceDensity", x, np.array([0.25]), np.zeros(3), 2.0, 21, field=np.ones(1))
+    assert np.unravel_index(np.argmax(sd), sd.shape) == (5, 13)
+
+
+def test_grid3d_vector_deposit(cloud):
+    pos, H, m, vel = cloud["pos"], cloud["H"], cloud["m"], cloud["vel"]
+    mom = mo.grid3d_deposit(pos, H, m[:, None] * vel, np.zeros(3), 6.0, 17)
+    one = mo.grid3d_deposit(pos, H, m * vel[:, 2], np.zeros(3), 6.0, 17)
+    assert mom.shape == (17, 17, 17, 3)
+    np.testing.assert_allclose(mom[..., 2], one, rtol=1e-12)
+
+
+def test_grid3d_interp_linear_exact(cloud):
+    M = mo.MeshoidCache().get("g", cloud["pos"], cloud["m"], cloud["H"])
+    a, b = np.array([0.3, -1.2, 2.0]), 0.7
+    f = cloud["pos"] @ a + b
+    g = mo.grid3d_interp(M, f, CENTER, 1.0, 9, order=1)
+    pts = mo.grid3d_points(CENTER, 1.0, 9)
+    np.testing.assert_allclose(g.ravel(), pts @ a + b, rtol=1e-9, atol=1e-9)
+    origin, spacing = mo.grid3d_geometry(CENTER, 1.0, 9)
+    np.testing.assert_allclose(pts[0], origin)
+    np.testing.assert_allclose(pts[9 * 9 + 9 + 1] - pts[0], spacing)  # (1,1,1) node
+
+
+def test_derived_fields_exact_for_linear_fields(cloud):
+    pos = cloud["pos"]
+    M = Meshoid(pos, cloud["m"])
+    a = np.array([0.3, -1.2, 2.0])
+    A = np.array([[1.0, 2.0, 0.0], [-0.5, 0.3, 4.0], [0.2, 0.0, -1.0]])
+    d = mo.derived_fields(M, pos @ a, "phi", which=("Gradient", "KernelAverage", "KernelStd", "Density"))
+    np.testing.assert_allclose(d["grad_phi"], np.broadcast_to(a, (len(pos), 3)), rtol=1e-8, atol=1e-8)
+    assert set(d) == {"grad_phi", "KernelAverage_phi", "KernelStd_phi", "MeshoidDensity"}
+    v = pos @ A.T
+    dv = mo.derived_fields(M, v, "v", which=("Gradient", "DivCurl", "KernelAverage"))
+    np.testing.assert_allclose(dv["div_v"], np.trace(A), rtol=1e-8, atol=1e-8)
+    curl = [A[2, 1] - A[1, 2], A[0, 2] - A[2, 0], A[1, 0] - A[0, 1]]
+    np.testing.assert_allclose(dv["curl_v"], np.broadcast_to(curl, (len(pos), 3)), rtol=1e-8, atol=1e-8)
+    np.testing.assert_allclose(dv["grad_v"].reshape(-1, 3, 3), np.broadcast_to(A, (len(pos), 3, 3)),
+                               rtol=1e-8, atol=1e-8)  # [i, k] = d v_i / d x_k
+    assert dv["KernelAverage_v"].shape == (len(pos), 3)
+    with pytest.raises(ValueError):
+        mo.derived_fields(M, pos @ a, "phi", which=("DivCurl",))
+
+
+def test_deposit3d_matches_meshoid_inside(cloud):
+    """For kernels inside the box, pvgizmo.deposit == meshoid's GridDensity (node-shifted)."""
+    from meshoid.grid_deposition import GridDensity
+    pos, H, m = cloud["pos"], cloud["H"], cloud["m"]
+    size, res = 8.0, 33
+    dx = size / (res - 1)
+    h = np.clip(H, dx, None)
+    inside = np.all(np.abs(pos) + h[:, None] < size / 2, axis=1) & (h < 15 * dx)
+    ours = mo.grid3d_deposit(pos[inside], H[inside], m[inside], np.zeros(3), size, res)
+    ref = GridDensity(m[inside], pos[inside], h[inside], np.zeros(3) - dx / 2, size, res, box_size=-1)
+    np.testing.assert_allclose(ours, ref, rtol=1e-10, atol=1e-12 * ref.max())
+
+
+def test_deposit3d_big_and_crossing_kernels():
+    """Edge-crossing kernels deposit only their in-box share; no giant allocations."""
+    from meshoid.kernel_density import kernel3d
+    size, res = 1.0, 17
+    dx = size / (res - 1)
+    # a huge kernel (1e4 voxels) centred far outside: its density in the box is ~ m W(q)/H^3
+    x = np.array([[300.0, 0.0, 0.0]])
+    H = np.array([400.0])
+    g = mo.grid3d_deposit(x, H, np.ones(1), np.zeros(3), size, res)
+    q = np.linalg.norm(mo.grid3d_points(np.zeros(3), size, res) - x, axis=1) / 400.0
+    want = np.array([kernel3d(v) for v in q]).reshape(g.shape) / 400.0**3
+    np.testing.assert_allclose(g, want, rtol=1e-6)  # analytic normalisation for huge kernels
+    assert g.sum() * dx**3 < 1e-6  # not the whole unit mass dumped into the box
+    # wide (analytic-normalised) kernels fully inside still conserve mass closely
+    x = np.zeros((1, 3))
+    for r_vox in (20.0, 7.3):
+        size, res = 2.0, 129
+        dx = size / (res - 1)
+        g = mo.grid3d_deposit(x, np.array([r_vox * dx]), np.ones(1), np.zeros(3), size, res)
+        assert g.sum() * dx**3 == pytest.approx(1.0, rel=1e-4 if r_vox > 15 else 1e-12)
+
+
+def test_conservative_projection_with_crossing_kernels(cloud):
+    pos, H, m = cloud["pos"], cloud["H"], cloud["m"]
+    size, res = 1.0, 32  # small window: many kernels cross the edge
+    cons = mo.project("SurfaceDensity", pos, H, np.zeros(3), size, res, field=m, conservative=True)
+    plain = mo.project("SurfaceDensity", pos, H, np.zeros(3), size, res, field=m)
+    # no edge pile-up: the conservative map stays close to the plain one everywhere
+    np.testing.assert_allclose(cons, plain, rtol=0.25)
+    assert cons.sum() == pytest.approx(plain.sum(), rel=0.05)

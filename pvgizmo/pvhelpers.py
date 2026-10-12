@@ -68,7 +68,7 @@ def show_particles(source, block="Gas", view=None, color_by="Density", opacity=0
     return ext, rep
 
 
-def map_range(filt, log=True, percentiles=(1.0, 99.9)):
+def map_range(filt, log=True, percentiles=(1.0, 99.9), name=None):
     """Colour range from percentiles of the image values (positive ones for log maps).
 
     Robust for high-dynamic-range maps (collapsing clouds span many decades), and
@@ -78,7 +78,8 @@ def map_range(filt, log=True, percentiles=(1.0, 99.9)):
     from paraview import servermanager
     from vtkmodules.util import numpy_support as ns
     img = servermanager.Fetch(filt)
-    a = ns.vtk_to_numpy(img.GetPointData().GetArray(0)).astype(np.float64)
+    arr = img.GetPointData().GetArray(name) if name else img.GetPointData().GetArray(0)
+    a = ns.vtk_to_numpy(arr).astype(np.float64)
     if a.ndim > 1:
         a = np.linalg.norm(a, axis=1)
     a = a[np.isfinite(a)]
@@ -100,11 +101,39 @@ def show_map(filt, view=None, log=True, preset="Inferno (matplotlib)", percentil
     pvs.ColorBy(rep, ("POINTS", name))
     lut = pvs.GetColorTransferFunction(name)
     lut.ApplyPreset(preset, True)
-    rng = map_range(filt, log, percentiles)
+    rng = map_range(filt, log, percentiles, name)
     if rng is not None:
         lut.AutomaticRescaleRangeMode = "Never"
         lut.RescaleTransferFunction(*rng)
         lut.UseLogScale = int(bool(log))
+    return rep
+
+
+def show_volume(grid, view=None, preset="Inferno (matplotlib)", color_pct=(50.0, 99.99),
+                opacity_pct=(90.0, 99.99), max_opacity=0.6):
+    """Volume-render a Meshoid Grid using its log10_<array> (linear map over log values).
+
+    ParaView's volume mapper ignores log-scaled colour maps, hence the log10 array
+    (Meshoid Grid's AddLog10, on by default). Opacity starts higher (opacity_pct)
+    than the colour range (color_pct), so visible voxels are coloured, not black.
+    """
+    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    grid.UpdatePipeline()
+    names = grid.PointData.keys()
+    name = next((n for n in names if n.startswith("log10_")), names[0])
+    rep = pvs.Show(grid, view)
+    rep.SetRepresentationType("Volume")
+    pvs.ColorBy(rep, ("POINTS", name))
+    lut = pvs.GetColorTransferFunction(name)
+    lut.ApplyPreset(preset, True)
+    c = map_range(grid, False, color_pct, name)
+    o = map_range(grid, False, opacity_pct, name)
+    if c is None or o is None:
+        return rep
+    lut.AutomaticRescaleRangeMode = "Never"
+    lut.RescaleTransferFunction(*c)
+    otf = pvs.GetOpacityTransferFunction(name)
+    otf.Points = [c[0], 0.0, 0.5, 0.0, o[0], 0.0, 0.5, 0.0, c[1], max_opacity, 0.5, 0.0]
     return rep
 
 

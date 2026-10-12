@@ -103,3 +103,22 @@ def test_projection_matches_guac_pattern(snap):
     # vs. inside the deposition loses ~3e-9 of relative position precision in float64.
     np.testing.assert_allclose(v, ref, rtol=1e-6, atol=1e-9 * ref.max())
     print(f"\n{os.path.basename(snap)}: N_gas={len(pos)} res={res} projection {dt:.2f}s")
+
+
+def test_grid_mass_matches_box_content(snap):
+    """Zoom data: edge-crossing outer kernels must not dump their mass into the box.
+
+    (meshoid's GridDensity renormalises them onto in-box nodes: on m12f snapshot 177
+    that is ~440x the mass actually inside the window.)
+    """
+    from pvgizmo import meshoid_ops as mo
+    parts = io.snapshot_parts(snap)
+    c = io.density_peak(parts)
+    d = io.read_ptype(parts, 0, ["Masses", "SmoothingLength"], center=c)
+    x, h, m = d["Coordinates"], d["SmoothingLength"], d["Masses"].astype(np.float64)
+    size = float(2 * np.percentile(np.linalg.norm(x, axis=1), 90))
+    res = 64
+    rho = mo.grid3d_deposit(x, h, m, np.zeros(3), size, res)
+    deposited = rho.sum() * (size / (res - 1)) ** 3
+    centres_inside = m[np.all(np.abs(x) < size / 2, axis=1)].sum()
+    assert 0.5 * centres_inside < deposited < 2 * centres_inside, (deposited, centres_inside)

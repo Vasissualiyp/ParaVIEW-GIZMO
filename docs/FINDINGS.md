@@ -187,3 +187,45 @@ Important limits:
   test saw 20 projections during a 10-step drag, then one full-resolution
   run. Mouse start/end events arrive on the view proxy.
 
+## Phase 3 findings (2026-10-12)
+- **meshoid 3D deposition, three problems on zoom data**
+  (`grid_deposition.GridDensity`, used by `Meshoid.DepositToGrid`):
+  1. Its non-periodic grid sits **half a voxel off** its own 2D grid: node k is
+     at `-size/2 + (k+1/2)·dx`. In 2D it is at `-size/2 + k·dx`.
+  2. Each particle's weights are **renormalised over the in-box nodes only**,
+     so a kernel crossing the box edge deposits its *whole* mass inside. On
+     m12f snapshot 177, a window around the density peak overlaps 4.3k
+     edge-crossing cells, 157 of them with kernels larger than the whole box.
+     Together they carry **440× the mass actually inside the window**.
+  3. It allocates a (2H/dx)³ kernel cache per particle. With H/dx up to
+     77,000 that is a MemoryError, which the threaded wrapper then hides as an
+     unrelated `out += None` dtype error.
+
+  The 2D *conservative* core has the same renormalisation and cache. The
+  default non-conservative 2D core (what GUAC uses) is fine: it uses an
+  analytic `f·W/h²`. **Fix:** `pvgizmo/deposit.py`, a numba kernel that
+  normalises over the *full* kernel (exact discrete sum up to 15 voxels,
+  analytic beyond), visits only in-box nodes and allocates nothing. It
+  matches meshoid exactly for kernels inside the box. A 128³ grid of the
+  561k-cell snapshot takes 0.42 s. Conservative 2D maps send edge-crossing
+  kernels through the non-renormalised core. Worth reporting upstream.
+- **`TreeUpdate` overwrites a user-supplied kernel radius.** Accessing
+  `ngb` (gradients, order ≥ 1 reconstruction) recomputes `kernel_radius`,
+  `density` and `vol` with meshoid's own 32-neighbour estimate. The Derived
+  Fields filter therefore names its outputs `Meshoid*`.
+- `Meshoid.KernelAverage` is scalar-only (`einsum "ij,ij->i"`), so we apply it
+  per component. `KernelVariance` returns the standard deviation.
+- **ParaView's volume mapper ignores log-scaled colour maps** (a black
+  render). Meshoid Grid therefore also outputs `log10_[array]`, which
+  `pvhelpers.show_volume` renders with a linear map. Opacity starts higher
+  than the colour range, so visible voxels get colour.
+- **A `<` in a Python plugin's XML (e.g. a Documentation string) makes that
+  proxy silently fail to register.** `test_all_proxies_registered` guards
+  against this.
+- Array names are Calculator-friendly (`SurfaceDensity_Masses`,
+  `grad_Density`, `log10_GridDensity_Masses`). Names with parentheses need
+  quoting in ParaView's Calculator.
+- Timings (561k gas cells, cached tree): gradient + div + curl 5.8 s the
+  first time (tree and weights), then kernel average 3.4 s; velocity
+  interpolation onto a 64³ grid 0.17 s.
+

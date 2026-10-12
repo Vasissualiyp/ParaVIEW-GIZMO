@@ -44,11 +44,14 @@ def test_gui_smoke(snapdir, tmp_path):
     assert "GUI_SMOKE_OK 4000" in log, log[-3000:]
     assert "Traceback" not in log and "NumbaSystemWarning" not in log, log[-3000:]
     proj_shot = shot.replace(".png", "_proj.png")
-    assert n_colors(shot) > 50 and n_colors(proj_shot) > 50  # something was rendered, not a blank view
+    vol_shot = shot.replace(".png", "_volume.png")
+    for png in (shot, proj_shot, vol_shot):  # something was rendered, not a blank view
+        assert n_colors(png) > 50, png
     if os.environ.get("PV_GIZMO_KEEP_SHOT"):
         keep = os.environ["PV_GIZMO_KEEP_SHOT"]
         shutil.copy(shot, keep)
         shutil.copy(proj_shot, keep.replace(".png", "_proj.png"))
+        shutil.copy(vol_shot, keep.replace(".png", "_volume.png"))
 
 
 @pytest.mark.skipif(not (shutil.which("xvfb-run") and shutil.which("paraview") and shutil.which("xdotool")),

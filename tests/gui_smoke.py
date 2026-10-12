@@ -67,6 +67,14 @@ try:
     SaveScreenshot(os.environ["SHOT"].replace(".png", "_proj.png"), view, ImageResolution=[800, 600])
     n_img = proj.GetDataInformation().GetNumberOfPoints()
     assert n_img == 128 * 128, n_img
+
+    # Phase 3: volume rendering of a Meshoid Grid (via its log10 array)
+    pvs.Hide(proj, view)
+    grid = pvs.MeshoidGrid(Input=r, Resolution=48)
+    pvhelpers.show_volume(grid, view)
+    pvs.ResetCamera(view)
+    Render(view)
+    SaveScreenshot(os.environ["SHOT"].replace(".png", "_volume.png"), view, ImageResolution=[800, 600])
     print("GUI_SMOKE_OK", gas.GetDataInformation().GetNumberOfPoints(), flush=True)
 except Exception:
     # the GUI redirects sys.stderr into its output window; use the real stdout

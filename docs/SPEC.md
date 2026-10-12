@@ -91,6 +91,54 @@ docs/
   Point Gaussian representation (scale = kernel radius), adds a surface-density
   projection, and sets a log colour map.
 
+### 7. Space look (colormaps, composites, shiny stars)
+Goal: images that look like Mike Grudic's
+[vizmo](https://github.com/mikegrudic/vizmo), which means glowing gas on
+black, two-field colour composites, and stars drawn as point-spread-function
+(PSF) glows. Reference points in vizmo: `vizmo/colormaps.py`,
+`shaders/composite.wgsl`, `shaders/star_realistic.wgsl`.
+- **Colormaps.** vizmo only uses matplotlib maps (`magma`, `inferno`,
+  `viridis`, `plasma`, `coolwarm`, `hot`, `bone`, `cividis`). ParaView ships
+  most of them. Generate preset JSON for the missing ones from matplotlib (and
+  optionally cmasher), and auto-import it on plugin load via
+  `vtkSMTransferFunctionPresets`. Add a "Space look" macro that sets a black
+  background, a log scale, and the `magma` map on a surface-density
+  projection.
+- **Two-field composite** (filter → RGB `vtkImageData`). This ports vizmo's
+  HSV composite: lightness comes from normalised field 1 (usually log Σ) and
+  hue comes from field 2 (for example T or v_los) through a colormap. Each
+  field has its own min/max/log. Both inputs are `Meshoid Projection`
+  outputs on the same grid. The output is a `uchar` RGB array shown with Map
+  Scalars off, because lookup tables can't map two scalars to one colour.
+- **Star luminosity & colour** (filter or reader option on `Stars` →
+  `StarLuminosity`, `StarRGB` point arrays). FIRE star particles are stellar
+  populations, not single stars, so vizmo's ZAMS L(M) fallback doesn't apply.
+  Use a population-synthesis lookup table (L per band versus age and Z) with
+  age taken from `StellarFormationTime` and the snapshot cosmology. The output
+  is per-band L (U, B, V, R, I, or at least B/V/I) and an RGB built as
+  I→R, V→G, B→B, like vizmo. STARFORGE sinks use `StarLuminosity_Solar` when
+  present, and ZAMS L(M) otherwise.
+- **Shiny-star display** (Point Gaussian preset on `Stars`):
+  - `ShaderPreset='Custom'`, with a `CustomShader` that draws a Gaussian core
+    plus a soft halo (optionally diffraction spikes, or a baked PSF profile)
+  - size ∝ L^½ through `SetScaleArray` / `ScaleTransferFunction`, with a
+    minimum size in pixels
+  - colour from `StarRGB` with Map Scalars off
+  - additive blending, so overlapping stars glow
+  
+  Verify that the `Emissive` representation property gives additive blending
+  (`vtkPointGaussianMapper`) rather than PBR emission. If it doesn't, fall
+  back to `ShaderReplacements`.
+- **Dust extinction (later).** Per-band attenuation of each star by the gas
+  column toward the camera, as vizmo does (`_update_star_columns`, ported from
+  `starforge_tools.star_gas_columns`). Needs a column-density routine from
+  meshoid or pytreegrav, recomputed only when the camera moves. The camera is
+  only visible on the client, so this ties into the "aim at camera" macro.
+- **Tests.** Preset JSON round-trips. The composite filter's
+  lightness and hue match a numpy reference. Star L/RGB is monotonic in age
+  for synthetic stars in `snapgen.py`. A GUI screenshot of the shiny-star
+  preset is non-black, with bright pixels at the star positions.
+
 ## Cross-cutting requirements
 - **Caching:** cache the Meshoid object (tree, neighbours, gradient weights)
   per (file, part type, mask) in the pipeline, so changing projection
@@ -181,9 +229,10 @@ docs/
 | 0 | Nix dev shell (done) | pvpython + GUI import meshoid; Python **and C++** plugins build and load; multiprocessing fix |
 | 1 | Reader + synthetic test snapshots (**done 2026-10-12**: 28 synthetic tests + 12 opt-in real-data tests on FIRE m12f cutouts) | single- and multi-part snapshots and time series open in the GUI, with arrays selectable |
 | 2 | Projection + Slice filters (**done 2026-10-12**: any orientation, 4 projection modes, slices of order 0–2, camera-aimed projection, presets/macros; matches GUAC on m12f data to ~1e-8) | maps match meshoid/GUAC scripts on the same data |
-| 3 | Grid + Derived Fields; Point Gaussian preset | volume rendering and contours of gas density work |
+| 3 | Grid + Derived Fields; Point Gaussian preset (**done 2026-10-12**: mass-correct 3D deposition for zoom data, interpolated vector grids for streamlines, gradient/div/curl/kernel stats; live camera-following projections) | volume rendering and contours of gas density work |
 | 4 | Performance | profile real FIRE/STARFORGE data. Options: C++ reader (HDF5) and/or C++ deposition; MPI-parallel reading split by file parts; `pvserver` on a cluster with client–server mode; CUDA backend (`numba-cuda`) |
 | 5 | Packaging | Nix package for the plugin; documented usage; optional VisIt route (not yet investigated) |
+| 6 | Space look (component 7). It needs only Phase 2, so it can run before 4/5. Order: presets + macro → two-field composite → star L/RGB → shiny-star shader → extinction | an m12f gas projection with stars overlaid looks like vizmo output: log Σ on black, composite hue, PSF-glow stars coloured by age |
 
 ## Open questions for you
 1. ~~Test data~~: answered. Use FIRE m12f cutouts under
@@ -196,3 +245,7 @@ docs/
    use enough?
 4. Should the plugin eventually be upstreamed into meshoid, or stay as a
    separate repo?
+5. Which stellar-population luminosity table should the star colours use:
+   the one FIRE's own visualization uses, Starburst99, FSPS, or something
+   else? Licensing and Nix packaging matter here, so a small table baked
+   into the repo is preferred.
