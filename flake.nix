@@ -32,10 +32,21 @@
             cmake ninja gcc gdb pkg-config
             qt6Packages.wrapQtAppsHook
             hdf5
+            git
+            xvfb-run   # headless GUI tests: xvfb-run -a paraview --script=... --exit
           ];
 
           shellHook = ''
             export PV_GIZMO_ROOT=$PWD
+            # meshoid is a git-ignored local clone (editable). Recreate it if missing.
+            if [ ! -d "$PWD/meshoid" ]; then
+              git clone -q https://github.com/mikegrudic/meshoid "$PWD/meshoid" \
+                && git -C "$PWD/meshoid" checkout -q ad32966
+            fi
+            # sys.executable is pvpython/paraview, which can't run multiprocessing
+            # helpers (numba's parallel init spawns resource_tracker). Plugins call
+            # multiprocessing.set_executable($PV_GIZMO_PYTHON) before importing numba.
+            export PV_GIZMO_PYTHON=${pythonEnv}/bin/python3
             # Make pythonEnv's site-packages (meshoid, numba, h5py...) visible
             # inside paraview / pvpython, which use VTK's bare interpreter.
             export PYTHONPATH=$PWD/meshoid/src:${pythonEnv}/${pythonEnv.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}

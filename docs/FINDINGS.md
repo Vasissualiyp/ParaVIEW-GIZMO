@@ -37,20 +37,32 @@ meshoid's dependencies, a C++ plugin toolchain (cmake, ninja, gcc, gdb) and HDF5
 | `Meshoid(...).SurfaceDensity()`, `.Density()` inside pvpython on 2e4 random points | OK |
 | Load a `VTKPythonAlgorithmBase` + `@smproxy` Python plugin via `LoadPlugin` | OK |
 | `find_package(ParaView)` in a C++ CMake project (configure only, no compile) | OK. The project must enable **C and CXX** (catalyst → FindMPI needs C) |
+| **C++ plugin compile + load** (re-verified 2026-10-12): `paraview_plugin_scan/build`, a VTK module with a `vtkPolyDataAlgorithm` + SM XML, built with Ninja, then `LoadPlugin` in pvpython | OK. The export header is named after the module's *short* name (`Mod` → `ModModule.h`, `MOD_EXPORT`). The `paraview.simple` function name comes from the XML `label` with spaces stripped |
+| **GUI** under `xvfb-run -a paraview --script=… --exit`: C++ plugin + meshoid + `SaveScreenshot` | OK (no display in the agent session, so Xvfb was used; `QT_QPA_PLATFORM=offscreen` aborts because it has no GL) |
+| `vtkSPHCubicKernel().GetCutoffFactor()` | 2.0, so **h_vtk = H_gizmo / 2** for the built-in SPH interpolators |
+| VisIt in the pinned nixpkgs | **not packaged** (no `visit` attribute) |
 | Built-in SPH tools present | `SPHInterpolator`, `SPHVolumeInterpolator`, `SPHPlaneInterpolator`, `SPHLineInterpolator`, `vtkSPHCubicKernel`/`Quartic`/`Quintic`; Point Gaussian mapper is available |
 
 ### Gotchas found
-- **`multiprocessing` under pvpython.** After a meshoid call, pvpython printed
-  `can't open file '.../from multiprocessing.resource_tracker import main;main(13)'`.
-  `sys.executable` is `pvpython`, which does not accept `-c` the way python does,
-  so a spawned helper process fails. The result was still correct. Plan: in the
-  plugin, call `multiprocessing.set_executable(<pythonEnv python>)` or avoid
-  multiprocessing-based code paths. The origin hasn't been pinned down yet. The
-  likely candidates are the numba or scipy worker paths.
-- The GUI was not launched in this session. Only the headless pvpython and
-  CMake paths were exercised.
-- No local GIZMO snapshot was found under `~` (depth ≤ 6). Test data is still
-  needed.
+- **`multiprocessing` under pvpython/paraview (root cause found).** numba's
+  parallel backend init (`numba/np/ufunc/parallel.py:308`) creates a
+  `multiprocessing` RLock, and that starts `resource_tracker` with
+  `sys.executable`. That is `pvpython`/`paraview`, not python. In pvpython this
+  prints `can't open file '…from multiprocessing.resource_tracker import main…'`.
+  In the GUI it gives `NumbaSystemWarning: Could not obtain multiprocessing
+  lock … Broken pipe`. Results are correct in both cases. scipy's KDTree
+  `workers=` uses threads and is not involved. **Fix (verified):** the shell
+  exports `PV_GIZMO_PYTHON`, and every plugin calls
+  `multiprocessing.set_executable(os.environ["PV_GIZMO_PYTHON"])` before it
+  imports numba or meshoid. With that, the warning goes away.
+- The meshoid clone is git-ignored, so it can disappear on a fresh checkout.
+  The shellHook now re-clones it at `ad32966` if it is missing.
+- No local GIZMO snapshot was found under `~` (depth ≤ 6). A public real
+  snapshot is used by meshoid's Walkthrough: STARFORGE
+  `M2e4_R10_…_42/output/snapshot_2590.hdf5` (3.1 GB, 23.7M gas cells, no
+  cosmology, velocities in m/s), from
+  `users.flatironinstitute.org/~mgrudic/starforge_data/STARFORGE_RT/STARFORGE_v1.2/`.
+  It has not been downloaded yet.
 
 ## Meshoid (read: `src/meshoid/*.py`, `docs/source/*.rst`)
 
