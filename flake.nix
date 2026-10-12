@@ -47,9 +47,9 @@
             # helpers (numba's parallel init spawns resource_tracker). Plugins call
             # multiprocessing.set_executable($PV_GIZMO_PYTHON) before importing numba.
             export PV_GIZMO_PYTHON=${pythonEnv}/bin/python3
-            # Make pythonEnv's site-packages (meshoid, numba, h5py...) visible
+            # Make pvgizmo, meshoid and pythonEnv's site-packages (numba, h5py...) visible
             # inside paraview / pvpython, which use VTK's bare interpreter.
-            export PYTHONPATH=$PWD/meshoid/src:${pythonEnv}/${pythonEnv.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}
+            export PYTHONPATH=$PWD:$PWD/meshoid/src:${pythonEnv}/${pythonEnv.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}
             # Auto-load our Python plugin(s) when present.
             if [ -d "$PWD/plugin" ]; then
               export PV_PLUGIN_PATH=$PWD/plugin''${PV_PLUGIN_PATH:+:$PV_PLUGIN_PATH}

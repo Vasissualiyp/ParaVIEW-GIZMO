@@ -110,9 +110,10 @@ docs/
 ## Key design decisions (v1)
 1. **Data model.** The reader emits a `vtkPartitionedDataSetCollection` plus a
    `vtkDataAssembly` (`/Gas`, `/Stars`, …). Particles are `vtkPolyData` with a
-   single poly-vertex cell, which is cheap and renders with Point Gaussian. The
-   kernel radius goes in a point array named `KernelRadius` (H, the support
-   radius), so downstream filters never guess.
+   single poly-vertex cell, which is cheap and renders with Point Gaussian.
+   The kernel radius H (support radius) stays in GIZMO's own
+   `SmoothingLength` array, and filters use that. *(Implemented. The earlier
+   draft's separate `KernelRadius` alias was dropped.)*
 2. **Meshoid filters take particles and return grids.** Every Meshoid filter
    takes the reader's collection, a `Block` selector (default Gas) and an input
    array. Output is `vtkImageData` with origin and spacing in simulation
@@ -153,6 +154,15 @@ docs/
    Phase 4, not a blocker. The Python plugins and a later C++ plugin can share
    the same XML/proxy names, so state files keep working.
 
+9. **Recentring is on by default** (gas density peak, or a custom centre).
+   Coordinates are shifted in float64 in the reader, the offset is recorded
+   as `CenterOffset`, and any bounding box applies in the recentred frame.
+   This is required: real zoom/cutout data collapses in float32 rendering
+   otherwise (FINDINGS). Every downstream filter works in this frame. Its
+   `Center` defaults to (0,0,0), i.e. the peak. For a time series the peak
+   is recomputed per snapshot, so the view follows the densest gas. A
+   "fixed centre across time" option can come later if needed.
+
 ## Phase 1–2 work breakdown
 | # | Task | Output |
 |---|---|---|
@@ -168,16 +178,15 @@ docs/
 | Phase | Deliverable | Done when |
 |---|---|---|
 | 0 | Nix dev shell (done) | pvpython + GUI import meshoid; Python **and C++** plugins build and load; multiprocessing fix |
-| 1 | Reader + synthetic test snapshots | single- and multi-part snapshots and time series open in the GUI, with arrays selectable |
+| 1 | Reader + synthetic test snapshots (**done 2026-10-12**: 28 synthetic tests + 12 opt-in real-data tests on FIRE m12f cutouts) | single- and multi-part snapshots and time series open in the GUI, with arrays selectable |
 | 2 | Projection + Slice filters | maps match meshoid/GUAC scripts on the same data |
 | 3 | Grid + Derived Fields; Point Gaussian preset | volume rendering and contours of gas density work |
 | 4 | Performance | profile real FIRE/STARFORGE data. Options: C++ reader (HDF5) and/or C++ deposition; MPI-parallel reading split by file parts; `pvserver` on a cluster with client–server mode; CUDA backend (`numba-cuda`) |
 | 5 | Packaging | Nix package for the plugin; documented usage; optional VisIt route (not yet investigated) |
 
 ## Open questions for you
-1. Test data: which snapshots, and where? (FIRE, STARFORGE, idealised boxes;
-   typical particle counts.) May I download the public 3.1 GB STARFORGE
-   walkthrough snapshot as the real-data benchmark?
+1. ~~Test data~~: answered. Use FIRE m12f cutouts under
+   `~/research/trillium/scratch/COPY/` (small files only; see FINDINGS).
 2. Is VisIt support wanted too, or is ParaView enough for now? VisIt is not
    in nixpkgs, so it would need its own (heavy) packaging or a non-Nix
    install. VisIt can read the 3D grids we export (`.vti`/`.vtk`) without any

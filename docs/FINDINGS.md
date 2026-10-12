@@ -55,9 +55,51 @@ meshoid's dependencies, a C++ plugin toolchain (cmake, ninja, gcc, gdb) and HDF5
   exports `PV_GIZMO_PYTHON`, and every plugin calls
   `multiprocessing.set_executable(os.environ["PV_GIZMO_PYTHON"])` before it
   imports numba or meshoid. With that, the warning goes away.
+- **GUI scripts and the Welcome dialog.** ParaView 6 opens a modal Welcome
+  dialog on a timer. It appears in the first event-loop spin of a
+  `--script` run and blocks forever under Xvfb. Calls that spin the loop
+  include `UpdateAnimationUsingDataTimeSteps()` and setting `AnimationTime`.
+  This was found with gdb (`ParaViewMainWindow::showWelcomeDialog` →
+  `QDialog::exec`). Fix: an isolated `XDG_CONFIG_HOME` whose `ParaView.ini`
+  contains `[General]` `GeneralSettings.ShowWelcomeDialog=false`. The key has
+  a dot, so it lives under `[General]`, not `[GeneralSettings]`.
+  - In the GUI, `sys.stderr` goes to the output window.
+  - `print` needs `flush=True` before `--exit`.
+- **Reader output reuse.** VTK hands `RequestData` the same output object
+  every time, so it must be cleared with `Initialize()`. Otherwise blocks
+  accumulate across time steps or property changes.
+- **`ExtractBlock` selector mode depends on timing.** The default `Assembly`
+  is `Hierarchy` (`/Root/<block name>`) if the input hasn't executed yet,
+  and the dataset's own `vtkDataAssembly` if it has. Naming our assembly
+  root `Root` makes `/Root/Gas` valid in both cases.
 - The meshoid clone is git-ignored, so it can disappear on a fresh checkout.
   The shellHook now re-clones it at `ad32966` if it is missing.
-- No local GIZMO snapshot was found under `~` (depth ≤ 6). A public real
+- **Real test data (2026-10-12):** `~/research/trillium/scratch/COPY/2026-03/`
+  is an **sshfs mount of Trillium scratch** (about 10 MB/s). It holds about
+  2250 snapshots of FIRE m12f cutouts (cosmological: z≈21, h=0.702,
+  BoxSize=60000). Sizes range from bytes to 41 GB, with a median of 390 MB.
+  Small ones for tests: `m12f_cutout/output_cutout/snapshot_259.hdf5`
+  (31 MB, 74k gas cells), `…/snapshot_519.hdf5` (184 MB, 442k gas cells),
+  `m12f_cutout/output_jeans_refinement/snapshot_177.hdf5` (234 MB, 561k gas
+  cells plus DM).
+  - Gas has 28 fields, including `EddingtonTensor` (6 components),
+    `PhotonEnergy` (5 components) and `Metallicity`. PartType5 holds
+    sinks/BHs with STARFORGE-style fields.
+  - In the `output_cutout` files the **header says 1737 PartType1 particles,
+    but there's no `PartType1` group**, so we trust the groups.
+  - Every field matches `load_from_snapshot` in both unit modes. The only
+    differences are float32 denormals, because we keep float32 while PFH
+    upcasts to float64.
+  - Reading the 7 default arrays of the 561k-cell file takes about 5 s, and
+    that's sshfs speed.
+  - **Float32 rendering collapse.** In `snapshot_259` the whole gas region
+    is **0.064 pc across at about 1948 kpc** from the origin. Coordinates are
+    float64 on disk, but rendering is float32, whose spacing there is 0.12 pc,
+    so all 74k cells landed on a single pixel. Fix: the reader recentres in
+    float64 before VTK (`Recenter`, default "Gas density peak", offset in the
+    `CenterOffset` field array). Meshoid filters must also work in the
+    recentred frame, or in float64 absolute coordinates.
+- Earlier: no local GIZMO snapshot was found under `~` (depth ≤ 6). A public real
   snapshot is used by meshoid's Walkthrough: STARFORGE
   `M2e4_R10_…_42/output/snapshot_2590.hdf5` (3.1 GB, 23.7M gas cells, no
   cosmology, velocities in m/s), from
