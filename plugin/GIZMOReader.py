@@ -222,7 +222,11 @@ class GIZMOSnapshotReader(VTKPythonAlgorithmBase):
         time, parts = self._pick_snapshot(outInfo)
         hdr = io.read_header(parts)
         fields = io.list_fields(parts)
-        offset = self._offset(parts)
+        # Parallel pvserver (mpiexec -n P): every rank executes the reader. Read on piece 0
+        # only, so data isn't duplicated P times; the other ranks keep the block structure
+        # with empty partitions. (One process already uses all cores via numba threads.)
+        piece = outInfo.Get(SDDP.UPDATE_PIECE_NUMBER()) if outInfo.Has(SDDP.UPDATE_PIECE_NUMBER()) else 0
+        offset = self._offset(parts) if piece == 0 else None
         out = vtkPartitionedDataSetCollection.GetData(outInfoVec, 0)
         out.Initialize()  # the output object is reused across executions
         assembly = vtkDataAssembly()
@@ -236,10 +240,11 @@ class GIZMOSnapshotReader(VTKPythonAlgorithmBase):
         for idx, t in enumerate(types):
             self.UpdateProgress(idx / max(len(types), 1))
             names = [k for k in fields[t] if k != "Coordinates" and self._arrays.ArrayIsEnabled(k)]
-            data = io.read_ptype(parts, t, names, physical=self._physical, stride=self._stride,
-                                 bbox=self._bbox if self._use_bbox else None, center=offset)
+            data = {} if piece != 0 else io.read_ptype(
+                parts, t, names, physical=self._physical, stride=self._stride,
+                bbox=self._bbox if self._use_bbox else None, center=offset)
             pos = data.pop("Coordinates", np.zeros((0, 3), np.float32))
-            if offset is None:
+            if offset is None and piece == 0:
                 _warn_if_float32_collapses(pos, io.PTYPE_NAMES[t])
             if "SmoothingLength" in data:  # VTK SPH kernels: support = 2h, GIZMO H = support
                 data["SmoothingLengthVTK"] = 0.5 * data["SmoothingLength"]

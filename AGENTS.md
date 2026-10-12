@@ -62,6 +62,12 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
 - `test_client_server.py` runs `tests/cs_client.py` against a real local
   `pvserver`. It checks plugin loading on both sides, camera-following, and
   rotated maps keeping their orientation through client delivery.
+- `test_client_server.py::test_mpi_pvserver` runs `mpiexec -n 3 pvserver`.
+  Results must equal the single-process ones: the reader loads on piece 0
+  only, and filters return empty outputs on empty pieces.
+- Cluster image: `nix build .#pvserver-image` (docs/TRILLIUM.md). It bakes in
+  `pvgizmo/` and `plugin/`, so rebuild it after changing them. Test it with
+  `apptainer run --containall` plus `tests/cs_client.py`.
 - Performance: `nix develop -c pvpython bench/bench.py [N ...]` (writes
   `testdata/bench_*.hdf5`). Re-run it after touching `pvgizmo/deposit.py` or
   the filters, and update the FINDINGS numbers.

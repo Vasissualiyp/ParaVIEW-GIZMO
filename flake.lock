@@ -18,6 +18,23 @@
         "type": "github"
       }
     },
+    "meshoid-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1787093985,
+        "narHash": "sha256-GAxQSOI3aANlw1NtaS2VJpuci23iIhCwOj62iidNYYo=",
+        "owner": "mikegrudic",
+        "repo": "meshoid",
+        "rev": "ad329662ae91e7f39ca113943085165f8f18eaf8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "mikegrudic",
+        "repo": "meshoid",
+        "rev": "ad329662ae91e7f39ca113943085165f8f18eaf8",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1791260994,
@@ -37,6 +54,7 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
+        "meshoid-src": "meshoid-src",
         "nixpkgs": "nixpkgs"
       }
     },

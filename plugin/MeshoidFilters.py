@@ -111,6 +111,13 @@ def _first_pointset(obj):
     return None
 
 
+def _parallel_piece(inInfoVec):
+    """True when this execution is one of several pieces (parallel pvserver/pvbatch)."""
+    info = inInfoVec[0].GetInformationObject(0)
+    key = SDDP.UPDATE_NUMBER_OF_PIECES()
+    return info.Has(key) and info.Get(key) > 1
+
+
 def _points_key(pd):
     """Identity of a point set's coordinates: VTK address + modification time."""
     pts = pd.GetPoints().GetData()
@@ -203,8 +210,11 @@ class _MeshoidImageFilter(VTKPythonAlgorithmBase):
         return self.GetInputArrayInformation(0).Get(vtkDataObject.FIELD_NAME())
 
     def _particles(self, inInfoVec):
+        """The particle block, or None on an empty piece of a parallel (MPI) run."""
         pd = find_block(vtkDataObject.GetData(inInfoVec[0], 0), self._block)
         if pd is None or pd.GetNumberOfPoints() == 0:
+            if _parallel_piece(inInfoVec):
+                return None  # data lives on another rank (the reader loads on piece 0)
             raise RuntimeError(f"no particles in block '{self._block}'")
         return pd
 
@@ -313,6 +323,8 @@ class MeshoidProjection(_MeshoidImageFilter):
 
     def RequestData(self, request, inInfoVec, outInfoVec):
         pd = self._particles(inInfoVec)
+        if pd is None:
+            return 1  # empty piece
         name = _resolve_field(pd, self._field_name(), "Masses")
         pos = ns.vtk_to_numpy(pd.GetPoints().GetData())
         f = _arr(pd, name)
@@ -384,6 +396,8 @@ class MeshoidSlice(_MeshoidImageFilter):
 
     def RequestData(self, request, inInfoVec, outInfoVec):
         pd = self._particles(inInfoVec)
+        if pd is None:
+            return 1  # empty piece
         name = _resolve_field(pd, self._field_name(), "Density")
         pos = ns.vtk_to_numpy(pd.GetPoints().GetData())
         f = _arr(pd, name)
@@ -464,6 +478,8 @@ class MeshoidGrid(_MeshoidImageFilter):
 
     def RequestData(self, request, inInfoVec, outInfoVec):
         pd = self._particles(inInfoVec)
+        if pd is None:
+            return 1  # empty piece
         name = _resolve_field(pd, self._field_name(), "Masses")
         pos = ns.vtk_to_numpy(pd.GetPoints().GetData())
         f = _arr(pd, name)
@@ -633,8 +649,9 @@ class MeshoidDerivedFields(VTKPythonAlgorithmBase):
             return pd
 
         if isinstance(out, vtkPointSet):
-            add(out)
-        elif not _replace_block(out, self._block, add):
+            if out.GetNumberOfPoints():
+                add(out)
+        elif not _replace_block(out, self._block, add) and not _parallel_piece(inInfoVec):
             raise RuntimeError(f"no particles in block '{self._block}'")
         return 1
 

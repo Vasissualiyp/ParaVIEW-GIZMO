@@ -50,19 +50,29 @@ for az in (70, -30):
 live.unfollow(p)
 p.AutoWindow, p.Center, p.Size, p.Normal, p.ViewUp = 0, [0, 0, 0], 6.0, [1, 0, 0], [0, 0, 1]
 view.CameraPosition, view.CameraFocalPoint, view.CameraViewUp = [0, -20, 0], [0, 0, 0], [0, 0, 1]
-for mode, threshold in (("local", 1e9), ("remote", 0)):
-    view.RemoteRenderThreshold = threshold
-    pvs.Render(view)
-    png = os.path.join(outdir, f"cs_{mode}.png")
-    pvs.SaveScreenshot(png, view, ImageResolution=[300, 300])
+def visible_fraction(mode, tag):
     from vtkmodules.util import numpy_support as ns
     from vtkmodules.vtkIOImage import vtkPNGReader
+    pvs.Render(view)
+    png = os.path.join(outdir, f"cs_{mode}_{tag}.png")
+    pvs.SaveScreenshot(png, view, ImageResolution=[300, 300])
     rd = vtkPNGReader()
     rd.SetFileName(png)
     rd.Update()
     px = ns.vtk_to_numpy(rd.GetOutput().GetPointData().GetScalars())[:, :3]
-    visible = np.any(px != px[0], axis=1).mean()
-    assert visible < 0.002, (mode, visible)  # a plane seen edge-on must (almost) vanish
+    return np.any(px != px[0], axis=1).mean()
+
+
+view.Background = [1.0, 1.0, 1.0]  # the map's empty pixels are black: keep them distinguishable
+view.UseColorPaletteForBackground = 0
+for mode, threshold in (("local", 1e9), ("remote", 0)):
+    view.RemoteRenderThreshold = threshold  # remote: rendered by the server (offscreen GL there)
+    view.CameraPosition, view.CameraFocalPoint, view.CameraViewUp = [0, -20, 0], [0, 0, 0], [0, 0, 1]
+    edge = visible_fraction(mode, "edge")
+    assert edge < 0.002, (mode, edge)  # a plane seen edge-on must (almost) vanish
+    view.CameraPosition = [20, 0, 0]  # face-on: positive control (a blank render fails here)
+    face = visible_fraction(mode, "face")
+    assert face > 0.2, (mode, face)
 
 g = pvs.MeshoidGrid(Input=r, Resolution=16)
 assert sm.Fetch(g).GetDimensions() == (16, 16, 16)

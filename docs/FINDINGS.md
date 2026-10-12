@@ -267,4 +267,21 @@ Important limits:
   version mismatch" (the driver was updated without a reboot). `numba-cuda`
   is available in the pinned nixpkgs. A CUDA port of `project2d` would mainly
   help full-resolution frames at large N.
+- **Cluster image (verified locally):** `nix build .#pvserver-image` produces a
+  1.6 GB docker archive. Apptainer needs it gunzipped, then makes a 1.55 GB
+  SIF. Running it with `--containall` (no host /nix, GPU or X) works:
+  - the host's ParaView 6.0.1 client connects;
+  - server-side rendering works through Mesa EGL, after a harmless "bad X
+    server connection" warning;
+  - the full client-server test passes.
+
+  See docs/TRILLIUM.md.
+- **MPI pvserver duplicated data.** Every rank executed the reader, and
+  ParaView merged the pieces: 2 ranks gave 13,000 particles for 6,500. Now
+  the reader loads only on piece 0, and filters return empty outputs on empty
+  pieces of a parallel run. `mpiexec -n 3 pvserver` gives the single-process
+  results (`test_mpi_pvserver`). Real distributed processing (each rank
+  reading a slab, images summed with an MPI reduction, neighbour ghosts for
+  slices and gradients) is future work. One process already uses every core
+  via numba threads.
 

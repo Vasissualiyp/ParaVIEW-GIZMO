@@ -41,3 +41,25 @@ def test_client_server(snapdir, tmp_path):
         assert "CS_OK" in log, log[-4000:]
     finally:
         os.killpg(server.pid, signal.SIGKILL)
+
+
+@pytest.mark.skipif(not (shutil.which("pvserver") and shutil.which("mpiexec")), reason="needs MPI pvserver")
+def test_mpi_pvserver(snapdir):
+    """mpiexec -n 3 pvserver: every rank runs the reader; results must not be duplicated."""
+    port = free_port()
+    server = subprocess.Popen(["mpiexec", "--oversubscribe", "-n", "3", "pvserver", f"--server-port={port}",
+                               "--force-offscreen-rendering"],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    try:
+        for _ in range(200):
+            with socket.socket() as s:
+                if s.connect_ex(("localhost", port)) == 0:
+                    break
+            time.sleep(0.1)
+        time.sleep(1.0)
+        client = subprocess.run(["pvpython", f"{HERE}/mpi_client.py", str(port), f"{snapdir}/single/snapshot_000.hdf5"],
+                                capture_output=True, text=True, timeout=240)
+        log = client.stdout + client.stderr
+        assert "MPI_OK" in log, log[-4000:]
+    finally:
+        os.killpg(server.pid, signal.SIGKILL)
