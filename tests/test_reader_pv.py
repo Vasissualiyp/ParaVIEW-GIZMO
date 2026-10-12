@@ -162,8 +162,20 @@ def test_recenter_zoom_survives_float32(pv, snapdir):
                                ref["Coordinates"] - snapgen.ZOOM_CENTER, rtol=0, atol=1e-12)
 
 
+def test_recenter_is_opt_in(pv, snapdir):
+    import GIZMOReader
+    r = pv["GIZMOSnapshotReader"](FileNames=[f"{snapdir}/zoom/snapshot_000.hdf5"])
+    assert r.Recenter == "None"  # enum properties read back as their label
+    data, b = blocks(r)
+    x = ns.vtk_to_numpy(b["Gas"].GetPoints().GetData())
+    assert GIZMOReader.float32_collapses(x)  # this is what triggers the reader's warning
+    assert [data.GetFieldData().GetArray("CenterOffset").GetValue(i) for i in range(3)] == [0, 0, 0]
+    _, b = blocks(pv["GIZMOSnapshotReader"](FileNames=[f"{snapdir}/single/snapshot_000.hdf5"]))
+    assert not GIZMOReader.float32_collapses(ns.vtk_to_numpy(b["Gas"].GetPoints().GetData()))
+
+
 def test_bbox_in_recentred_frame(pv, snapdir):
-    r = pv["GIZMOSnapshotReader"](FileNames=[f"{snapdir}/zoom/snapshot_000.hdf5"], UseBoundingBox=1,
+    r = pv["GIZMOSnapshotReader"](FileNames=[f"{snapdir}/zoom/snapshot_000.hdf5"], Recenter=1, UseBoundingBox=1,
                                   BoundingBox=[-1e-6, 1e-6, -1e-6, 1e-6, -1e-6, 1e-6])
     _, b = blocks(r)
     x = ns.vtk_to_numpy(b["Gas"].GetPoints().GetData())

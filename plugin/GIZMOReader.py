@@ -14,7 +14,7 @@ if _ROOT not in sys.path:
 import numpy as np  # noqa: E402
 from paraview.util.vtkAlgorithm import (  # noqa: E402
     VTKPythonAlgorithmBase, smdomain, smhint, smproperty, smproxy)
-from vtkmodules.vtkCommonCore import vtkDataArraySelection  # noqa: E402
+from vtkmodules.vtkCommonCore import vtkDataArraySelection, vtkOutputWindow  # noqa: E402
 from vtkmodules.vtkCommonDataModel import (  # noqa: E402
     vtkCompositeDataSet, vtkDataAssembly, vtkPartitionedDataSet, vtkPartitionedDataSetCollection)
 from vtkmodules.vtkCommonExecutionModel import vtkStreamingDemandDrivenPipeline as SDDP  # noqa: E402
@@ -27,6 +27,21 @@ DEFAULT_ARRAYS = {"Masses", "Density", "SmoothingLength", "Velocities", "Interna
 RECENTER_NONE, RECENTER_PEAK, RECENTER_CUSTOM = 0, 1, 2
 HEADER_FIELDS = ("Time", "Redshift", "HubbleParam", "BoxSize", "Omega_Matter", "Omega_Lambda",
                  "UnitLength_In_CGS", "UnitMass_In_CGS", "UnitVelocity_In_CGS")
+
+
+def float32_collapses(pos):
+    """True if the extent of `pos` is within ~1000 float32 steps at its distance from the origin."""
+    if len(pos) < 2:
+        return False
+    extent = float(np.max(pos.max(0) - pos.min(0)))
+    return extent < 1e3 * float(np.spacing(np.float32(np.abs(pos).max())))
+
+
+def _warn_if_float32_collapses(pos, name):
+    if float32_collapses(pos):
+        vtkOutputWindow.GetInstance().DisplayWarningText(
+            f"GIZMO reader: {name} spans less than ~1000 float32 steps at its distance from the "
+            "origin and will render collapsed. Set Recenter to 'Gas density peak' or 'Custom center'.")
 
 
 def _selection_observer(alg):
@@ -48,7 +63,7 @@ class GIZMOSnapshotReader(VTKPythonAlgorithmBase):
         self._stride = 1
         self._physical = True
         self._use_bbox = False
-        self._recenter = RECENTER_PEAK
+        self._recenter = RECENTER_NONE
         self._center = [0.0, 0.0, 0.0]
         self._peak_cache = {}  # (first part, physical) -> density-peak position
         self._bbox = [-1.0, 1.0, -1.0, 1.0, -1.0, 1.0]
@@ -106,15 +121,16 @@ class GIZMOSnapshotReader(VTKPythonAlgorithmBase):
 
     @smproperty.xml("""
         <IntVectorProperty name="Recenter" command="SetRecenter" number_of_elements="1"
-                           default_values="1">
+                           default_values="0">
           <EnumerationDomain name="enum">
             <Entry value="0" text="None"/>
             <Entry value="1" text="Gas density peak"/>
             <Entry value="2" text="Custom center"/>
           </EnumerationDomain>
           <Documentation>Subtract a center from all coordinates (in double precision) before
-          they reach VTK. Rendering is float32: a zoom region far from the box origin can be
-          smaller than float32 spacing there and collapses to a point without this. The
+          they reach VTK. Opt-in. Rendering is float32: a zoom region far from the box origin
+          can be smaller than float32 spacing there and collapses to a point without this (the
+          reader warns when that happens). The
           offset is stored in the CenterOffset field array. With a time series the density
           peak is found per snapshot.</Documentation>
         </IntVectorProperty>""")
@@ -223,6 +239,8 @@ class GIZMOSnapshotReader(VTKPythonAlgorithmBase):
             data = io.read_ptype(parts, t, names, physical=self._physical, stride=self._stride,
                                  bbox=self._bbox if self._use_bbox else None, center=offset)
             pos = data.pop("Coordinates", np.zeros((0, 3), np.float32))
+            if offset is None:
+                _warn_if_float32_collapses(pos, io.PTYPE_NAMES[t])
             if "SmoothingLength" in data:  # VTK SPH kernels: support = 2h, GIZMO H = support
                 data["SmoothingLengthVTK"] = 0.5 * data["SmoothingLength"]
             pd = vtkconv.particles_to_polydata(pos, data)

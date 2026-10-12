@@ -154,14 +154,15 @@ docs/
    Phase 4, not a blocker. The Python plugins and a later C++ plugin can share
    the same XML/proxy names, so state files keep working.
 
-9. **Recentring is on by default** (gas density peak, or a custom centre).
-   Coordinates are shifted in float64 in the reader, the offset is recorded
-   as `CenterOffset`, and any bounding box applies in the recentred frame.
-   This is required: real zoom/cutout data collapses in float32 rendering
-   otherwise (FINDINGS). Every downstream filter works in this frame. Its
-   `Center` defaults to (0,0,0), i.e. the peak. For a time series the peak
-   is recomputed per snapshot, so the view follows the densest gas. A
-   "fixed centre across time" option can come later if needed.
+9. **Recentring is opt-in** (`Recenter`: None (default) / gas density peak /
+   custom centre). Coordinates are shifted in float64 in the reader, the
+   offset is recorded as `CenterOffset`, and any bounding box applies in the
+   recentred frame. Real zoom/cutout data collapses in float32 rendering
+   without it (FINDINGS), so when `Recenter` is None the reader warns if the
+   data would collapse. Downstream filters work in whatever frame the reader
+   outputs. For a time series the density peak is recomputed per snapshot,
+   so the view follows the densest gas. A "fixed centre across time" option
+   can come later if needed.
 
 ## Phase 1–2 work breakdown
 | # | Task | Output |

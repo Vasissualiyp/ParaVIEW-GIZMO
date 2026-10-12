@@ -68,8 +68,9 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
   `DarkMatter`, `Type2`, `Type3`, `Stars`, `Type5`, under an assembly whose
   root is named **`Root`**. Selectors like `/Root/Gas` must keep working in both
   of ParaView's selection modes (see the gotchas below).
-- **Recentring:** the reader subtracts a centre in float64 (default: gas
-  density peak) and stores it as `CenterOffset`. Zoom regions can be smaller
+- **Recentring (opt-in, default None):** when asked, the reader subtracts a
+  centre in float64 (gas density peak or custom) and stores it as
+  `CenterOffset`. With None it warns if the data would collapse in float32. Zoom regions can be smaller
   than float32 spacing at their absolute position, and rendering is float32.
   Anything new must work in this recentred frame. Don't cast absolute
   coordinates to float32.

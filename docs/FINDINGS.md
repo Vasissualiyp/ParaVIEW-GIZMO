@@ -96,8 +96,9 @@ meshoid's dependencies, a C++ plugin toolchain (cmake, ninja, gcc, gdb) and HDF5
     is **0.064 pc across at about 1948 kpc** from the origin. Coordinates are
     float64 on disk, but rendering is float32, whose spacing there is 0.12 pc,
     so all 74k cells landed on a single pixel. Fix: the reader recentres in
-    float64 before VTK (`Recenter`, default "Gas density peak", offset in the
-    `CenterOffset` field array). Meshoid filters must also work in the
+    float64 before VTK when asked (`Recenter`, opt-in: "Gas density peak" or
+    "Custom center"; offset in the `CenterOffset` field array). With
+    `Recenter` = None the reader warns when the data would collapse. Meshoid filters must also work in the
     recentred frame, or in float64 absolute coordinates.
 - Earlier: no local GIZMO snapshot was found under `~` (depth ≤ 6). A public real
   snapshot is used by meshoid's Walkthrough: STARFORGE
