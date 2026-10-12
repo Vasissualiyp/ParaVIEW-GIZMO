@@ -1,0 +1,85 @@
+# Findings so far (2026-10-12)
+
+## Dev environment (`flake.nix`)
+
+`nix develop` gives ParaView 6.0.1 (Qt GUI, Python, MPI) plus a Python env with
+meshoid's dependencies, a C++ plugin toolchain (cmake, ninja, gcc, gdb) and HDF5.
+
+- **nixpkgs is pinned** to `151fa4e8…` (the system's NixOS revision). On the
+  newest nixos-unstable (`6510408…`), `vtk-9.5.2` and `paraview-6.0.1` were not
+  in cache.nixos.org yet, so Nix would have compiled both from source. On the
+  pinned revision, nothing heavy builds locally (about 212 MiB download). **When
+  you bump nixpkgs, run
+  `nix build --dry-run .#devShells.x86_64-linux.default` and confirm that vtk and
+  paraview are listed under "fetched", not "built".**
+- **ParaView embeds VTK's interpreter** (`vtk-full.vtkPackages.python3Packages`,
+  Python 3.14.7). The Python env is built from that package set, so
+  numba/h5py/scipy are ABI-compatible with `pvpython` and the GUI. The shellHook
+  puts that env's site-packages on `PYTHONPATH`.
+- **meshoid comes from the local clone** `./meshoid`
+  (github.com/mikegrudic/meshoid @ `ad32966`, v1.52.0, git-ignored). It is put on
+  `PYTHONPATH` like an editable install. Nix provides only its dependencies:
+  numpy, scipy, numba 0.67, h5py, astropy.
+- `PV_PLUGIN_PATH=$PWD/plugin` is exported when `plugin/` exists, so the
+  plugins auto-load in the GUI.
+- `NUMBA_CACHE_DIR` points to `~/.cache/numba`, so JIT results persist across
+  ParaView sessions.
+- GUAC's flake (`~/research/software_src/GUAC/flake.nix`) was the starting point.
+  It builds meshoid 1.48.5 from PyPI with a custom setup.py install. The
+  upstream package now uses `pyproject` and setuptools, so that hack isn't
+  needed.
+
+### Verified
+| Check | Result |
+|---|---|
+| `pvpython --version` | 6.0.1 |
+| `import meshoid, numba, h5py` inside pvpython | OK, VTK 9.5.2, numba 0.67.0 |
+| `Meshoid(...).SurfaceDensity()`, `.Density()` inside pvpython on 2e4 random points | OK |
+| Load a `VTKPythonAlgorithmBase` + `@smproxy` Python plugin via `LoadPlugin` | OK |
+| `find_package(ParaView)` in a C++ CMake project (configure only, no compile) | OK. The project must enable **C and CXX** (catalyst → FindMPI needs C) |
+| Built-in SPH tools present | `SPHInterpolator`, `SPHVolumeInterpolator`, `SPHPlaneInterpolator`, `SPHLineInterpolator`, `vtkSPHCubicKernel`/`Quartic`/`Quintic`; Point Gaussian mapper is available |
+
+### Gotchas found
+- **`multiprocessing` under pvpython.** After a meshoid call, pvpython printed
+  `can't open file '.../from multiprocessing.resource_tracker import main;main(13)'`.
+  `sys.executable` is `pvpython`, which does not accept `-c` the way python does,
+  so a spawned helper process fails. The result was still correct. Plan: in the
+  plugin, call `multiprocessing.set_executable(<pythonEnv python>)` or avoid
+  multiprocessing-based code paths. The origin hasn't been pinned down yet. The
+  likely candidates are the numba or scipy worker paths.
+- The GUI was not launched in this session. Only the headless pvpython and
+  CMake paths were exercised.
+- No local GIZMO snapshot was found under `~` (depth ≤ 6). Test data is still
+  needed.
+
+## Meshoid (read: `src/meshoid/*.py`, `docs/source/*.rst`)
+
+`Meshoid(pos, m=None, kernel_radius=None, des_ngb=32, boxsize=None, particle_mask=None, n_jobs=-1)`.
+Neighbours, kernel radius (H, the support radius of the cubic spline, as in
+GIZMO), density and volume are computed lazily by `TreeUpdate()`, which uses a
+scipy `KDTree` and numba `HsmlIter`.
+
+| Capability | API | Output | Use in ParaView |
+|---|---|---|---|
+| Kernel radius / density / volume | `SmoothingLength()`, `Density()`, `Volume()` | (N,) | point arrays (e.g. when hsml is missing: stars, DM) |
+| Gradients | `D(f, order=1/2)`, `D2(f)`, `Div(v)`, `Curl(v)` | (N,…,3) | derived-field filter |
+| Kernel stats | `KernelAverage`, `KernelVariance`, `Integrate` | (N,) / scalar | derived fields / reductions |
+| Reconstruction at points | `Reconstruct(f, pts, order 0–2, slope_limiter)` | (M,…) | basis for slices/probes at arbitrary points |
+| 2D slice | `Slice(f, size, plane, center, res, order)` | (res,res) | `vtkImageData` slice |
+| 3D grid | `InterpToGrid` (reconstruct), `DepositToGrid` (conservative SPH deposit) | (res³) | `vtkImageData` → volume rendering, contours, streamlines |
+| Projections | `SurfaceDensity` (conservative / multigrid / **cuda** backend), `Projection`, `ProjectedAverage`, `MassWeightedAverage` | (res,res) | column-density maps |
+| Low level | `grid_deposition.GridSurfaceDensity[Multi]`, `Grid_PPZ_DataCube` (PPV cubes), `GridDensity` | | |
+| I/O | `load_from_snapshot(value, ptype, sdir, snum)` (PFH's GIZMO HDF5 loader: multi-file, cosmological → physical units) | | reader backend |
+
+Important limits:
+- Projections **integrate along z only**, centred on `center` with side
+  `size`. For other view directions, rotate the coordinates first; this is cheap.
+- Grids are cubic: one `size` and one `res` for all axes.
+- Smoothing lengths are clipped to at least about 2 grid cells, so projections
+  are resolution-dependent.
+- `SurfaceDensity(backend="cuda")` exists and needs `numba-cuda`, which is not
+  in the env yet. The machine has an RTX 3070 Ti.
+- The GIZMO kernel radius H is the **support radius**. VTK's SPH kernels take a
+  smoothing length h with support of about 2h for cubic splines. Using ParaView's
+  built-in SPH filters therefore needs a factor-of-2 conversion; check
+  `vtkSPHKernel` before relying on it.
