@@ -1,7 +1,7 @@
 """ParaView filters: kernel-weighted projections and slices of GIZMO particles via meshoid.
 
 Input: the GIZMO reader's output (or any point set / composite of point sets);
-the particle type is chosen by block name. Output: a 2D vtkImageData placed in
+the particle type is chosen by block name. Output: a 2D vtkStructuredGrid placed in
 3D at the projection/slice plane (node grid spanning the window, see
 pvgizmo.meshoid_ops), so it overlays the particles.
 """
@@ -18,7 +18,7 @@ from paraview.util.vtkAlgorithm import VTKPythonAlgorithmBase, smdomain, smhint,
 from vtkmodules.util import numpy_support as ns  # noqa: E402
 from vtkmodules.vtkCommonDataModel import (  # noqa: E402
     vtkCompositeDataSet, vtkDataObject, vtkImageData, vtkMultiBlockDataSet, vtkPartitionedDataSet,
-    vtkPartitionedDataSetCollection, vtkPointSet)
+    vtkPartitionedDataSetCollection, vtkPointSet, vtkStructuredGrid)
 from vtkmodules.vtkCommonExecutionModel import vtkStreamingDemandDrivenPipeline as SDDP  # noqa: E402
 
 from pvgizmo import meshoid_ops as mo  # noqa: E402  (imports pvgizmo first: multiprocessing fix)
@@ -27,6 +27,33 @@ from pvgizmo import vtkconv  # noqa: E402
 
 DES_NGB = 32  # meshoid / GIZMO default neighbour number, for volumes when Density is missing
 _CACHE = mo.MeshoidCache(maxsize=2)  # shared by all filter instances (KD-trees are big)
+
+
+class _LRU:
+    """Small LRU for view-independent per-dataset arrays (projection channels, windows)."""
+
+    def __init__(self, maxsize=4):
+        from collections import OrderedDict
+        self.maxsize, self._d = maxsize, OrderedDict()
+
+    def __contains__(self, key):
+        return key in self._d
+
+    def get(self, key):
+        self._d.move_to_end(key)
+        return self._d[key]
+
+    def put(self, key, value):
+        self._d[key] = value
+        self._d.move_to_end(key)
+        while len(self._d) > self.maxsize:
+            self._d.popitem(last=False)
+
+    def clear(self):
+        self._d.clear()
+
+
+_VIEW_CACHE = _LRU(maxsize=4)  # camera moves reuse these: only the deposit runs per frame
 
 MODE_LABELS = ("Surface density", "Line-of-sight integral", "Mass-weighted average", "Projected average")
 
@@ -117,8 +144,10 @@ def _arr(pd, name):
 class _MeshoidImageFilter(VTKPythonAlgorithmBase):
     """Shared plumbing: input block lookup, window, image output."""
 
-    def __init__(self):
-        VTKPythonAlgorithmBase.__init__(self, nInputPorts=1, nOutputPorts=1, outputType="vtkImageData")
+    def __init__(self, outputType="vtkStructuredGrid"):
+        # 2D maps are vtkStructuredGrid with explicit points, not vtkImageData + direction
+        # matrix: ParaView's client-server delivery drops the direction matrix.
+        VTKPythonAlgorithmBase.__init__(self, nInputPorts=1, nOutputPorts=1, outputType=outputType)
         self._block = "Gas"
         self._normal = [0.0, 0.0, 1.0]
         self._up = [0.0, 1.0, 0.0]
@@ -179,9 +208,14 @@ class _MeshoidImageFilter(VTKPythonAlgorithmBase):
             raise RuntimeError(f"no particles in block '{self._block}'")
         return pd
 
-    def _window(self, pos):
+    def _window(self, pos, pd=None):
         if self._auto:
-            return mo.auto_extent(pos)
+            if pd is None:
+                return mo.auto_extent(pos)
+            key = ("auto_extent",) + _points_key(pd)  # median/percentile: O(N log N), cache it
+            if key not in _VIEW_CACHE:
+                _VIEW_CACHE.put(key, mo.auto_extent(pos))
+            return _VIEW_CACHE.get(key)
         return np.array(self._center, dtype=np.float64), self._size
 
     def _kernel_radius(self, pd, pos, masses):
@@ -191,11 +225,10 @@ class _MeshoidImageFilter(VTKPythonAlgorithmBase):
         return _meshoid_for(pd, pos).SmoothingLength()  # stars/DM: meshoid kernel radius
 
     def _emit(self, outInfoVec, values, name, center, size):
-        origin, spacing, direction = mo.image_geometry(center, size, self._res, self._normal, self._up)
-        values = np.asarray(values)[:, :, None]  # explicit z axis: (res, res, k) is a 2D vector image
-        img = vtkconv.image_from_array(values, origin, spacing, direction, name=name)
-        out = vtkImageData.GetData(outInfoVec, 0)
-        out.ShallowCopy(img)
+        pts = mo.slice_points(center, size, self._res, self._normal, self._up).reshape(self._res, self._res, 3)
+        grid = vtkconv.structured_grid_from_array(values, pts, name=name)
+        out = vtkStructuredGrid.GetData(outInfoVec, 0)
+        out.ShallowCopy(grid)
         vtkconv.add_field_data(out, {"WindowCenter": center, "WindowSize": size,
                                      "Normal": self._normal, "ViewUp": self._up})
 
@@ -288,17 +321,26 @@ class MeshoidProjection(_MeshoidImageFilter):
         m = _arr(pd, "Masses")
         h = self._kernel_radius(pd, pos, m)
         mode = mo.MODES[self._mode]
-        vol = None
-        if mode == "LineIntegral":
-            rho = _arr(pd, "Density")
-            vol = m / rho if (m is not None and rho is not None) else (4 * np.pi / 3) * h**3 / DES_NGB
         if mode == "MassWeightedAverage" and m is None:
             raise RuntimeError("Mass-weighted average needs a Masses array")
-        center, size = self._window(pos)
+        center, size = self._window(pos, pd)
         self.UpdateProgress(0.1)
-        img = mo.project(mode, pos, h, center, size, self._res, normal=self._normal, view_up=self._up,
-                         field=f, masses=m, volume=vol, smooth_fac=self._smooth, depth=self._depth,
-                         conservative=self._conservative)
+        if mode == "SurfaceDensity" and self._conservative:
+            img = mo.project(mode, pos, h, center, size, self._res, normal=self._normal, view_up=self._up,
+                             field=f, masses=m, smooth_fac=self._smooth, depth=self._depth, conservative=True)
+        else:
+            # per-particle channels don't depend on the view: build once per dataset/field/mode
+            fa = pd.GetPointData().GetArray(name)
+            key = ("chans", mode, name, fa.GetAddressAsString("vtkDataArray"), fa.GetMTime()) + _points_key(pd)
+            if key not in _VIEW_CACHE:
+                vol = None
+                if mode == "LineIntegral":
+                    rho = _arr(pd, "Density")
+                    vol = m / rho if (m is not None and rho is not None) else (4 * np.pi / 3) * h**3 / DES_NGB
+                _VIEW_CACHE.put(key, mo.projection_channels(mode, f, m, vol))
+            chans, tail = _VIEW_CACHE.get(key)
+            img = mo.project_channels(mode, chans, tail, pos, h, center, size, self._res, self._normal,
+                                      self._up, self._smooth, self._depth)
         self._emit(outInfoVec, img, f"{mode}_{name}", center, size)
         _live.debug_log("exec", filter="projection", normal=list(self._normal), res=self._res)
         return 1
@@ -374,7 +416,7 @@ class MeshoidGrid(_MeshoidImageFilter):
     """
 
     def __init__(self):
-        _MeshoidImageFilter.__init__(self)
+        _MeshoidImageFilter.__init__(self, outputType="vtkImageData")  # axis-aligned: no direction matrix
         self._res = 64
         self._mode = 0
         self._order = 0
@@ -595,4 +637,14 @@ class MeshoidDerivedFields(VTKPythonAlgorithmBase):
         elif not _replace_block(out, self._block, add):
             raise RuntimeError(f"no particles in block '{self._block}'")
         return 1
+
+
+# Client-server GUI: the filter constructor runs on the server, so the FollowCamera
+# auto-linker must also be installed here, when the client imports the plugin (after
+# connecting, so a session exists). In the builtin GUI there is no session yet at
+# import; the constructor-time call above covers that case. No-op outside the GUI.
+try:
+    _live.enable_auto_follow()
+except Exception:
+    pass
 

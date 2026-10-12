@@ -6,6 +6,12 @@ from vtkmodules.util import numpy_support as ns
 from pvgizmo import vtkconv
 
 
+def dims(obj):
+    """(nx, ny, nz) of image or structured-grid output (vtkStructuredGrid.GetDimensions needs an argument)."""
+    e = obj.GetExtent()
+    return (e[1] - e[0] + 1, e[3] - e[2] + 1, e[5] - e[4] + 1)
+
+
 def test_polydata_roundtrip():
     rng = np.random.default_rng(1)
     pos = rng.random((100, 3)).astype(np.float32)
@@ -52,3 +58,15 @@ def test_image_2d_vector_and_direction():
     pid = img.ComputePointId([2, 1, 0])
     np.testing.assert_allclose(a.GetTuple3(pid), v[2, 1])
     np.testing.assert_allclose(img.GetPoint(pid), rot @ [2, 1, 0])
+
+
+def test_structured_grid_from_array():
+    rng = np.random.default_rng(0)
+    v = rng.random((5, 4, 3))
+    pts = rng.random((5, 4, 3))
+    sg = vtkconv.structured_grid_from_array(v, pts, "vel")
+    assert dims(sg) == (5, 4, 1)
+    a = sg.GetPointData().GetArray("vel")
+    for i, j in [(0, 0), (4, 0), (2, 3)]:
+        np.testing.assert_allclose(sg.GetPoint(i + 5 * j), pts[i, j])
+        np.testing.assert_allclose(a.GetTuple3(i + 5 * j), v[i, j])

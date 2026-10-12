@@ -97,7 +97,7 @@ def show_map(filt, view=None, log=True, preset="Inferno (matplotlib)", percentil
     filt.UpdatePipeline()
     name = filt.PointData.keys()[0]
     rep = pvs.Show(filt, view)
-    rep.SetRepresentationType("Slice")
+    rep.SetRepresentationType("Surface")
     pvs.ColorBy(rep, ("POINTS", name))
     lut = pvs.GetColorTransferFunction(name)
     lut.ApplyPreset(preset, True)

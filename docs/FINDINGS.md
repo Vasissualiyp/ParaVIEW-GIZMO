@@ -229,3 +229,42 @@ Important limits:
   first time (tree and weights), then kernel average 3.4 s; velocity
   interpolation onto a 64³ grid 0.17 s.
 
+## Phase 4 findings (2026-10-12): performance and client-server
+- **Benchmark** (`bench/bench.py`, synthetic Plummer + background with analytic
+  H, 1M/4M/16M gas, local disk). Before optimising, a camera move at 128²
+  cost 0.04 / 0.15 / 0.60 s, nearly independent of zoom. At 16M it split into
+  0.27 s float32→float64 cast + rotation, 0.05 s kernel-radius cast/clip, and
+  only 0.15 s deposition.
+- **Subsampling while dragging (LOD) does not help.** With 2M of 16M
+  particles and H scaled by (N/n)^(1/3), it took 0.23 s against 0.15 s for
+  the full set, because the bigger kernels cover more pixels. Dropped.
+- **Fix:** `pvgizmo.deposit.project2d`, a numba kernel that rotates, culls and
+  clips in-loop, reading float32 arrays in place. It is identical to meshoid's
+  `GridSurfaceDensity` to 7e-16. View-independent per-particle channels
+  (m·f, volumes, the automatic window) are cached per dataset in the filter.
+  **One interactive camera move (filter re-execution, 128²) now costs
+  0.033 s (1M), 0.055 s (4M) and 0.142 s (16M)**, about 30 / 18 / 7 frames/s.
+  The full-resolution frame after release at 512² takes 0.3 / 0.5 / 0.84 s.
+- Slices: the first call builds meshoid's KD-tree (0.6 s at 1M, 3 s at 4M,
+  12–14 s at 16M); re-aiming afterwards costs 0.01–0.07 s.
+  `balanced_tree=False` only saves 20%, so it isn't used. Derived Fields
+  gradients: 4 s at 1M, 17 s at 4M (meshoid neighbour search and weights).
+- **ParaView's client-server delivery drops `vtkImageData`'s direction
+  matrix.** A rotated map rendered on the client arrives axis-aligned. A plane
+  seen edge-on showed 4.8% visible pixels with local rendering, versus 0% in
+  builtin mode and with server-side rendering. 2D maps are therefore
+  `vtkStructuredGrid` with explicit points. 3D grids are axis-aligned and stay
+  `vtkImageData`. `vtkStructuredGrid.GetDimensions()` needs an argument in
+  VTK 9.5's Python, so use `GetExtent()`.
+- **Client-server works end to end** (`tests/test_client_server.py`, and the
+  GUI drag test against a local `pvserver`). Plugins load on both sides via
+  `PV_PLUGIN_PATH`, the server opens the files, the camera link runs on the
+  client and the filter on the server. The FollowCamera auto-linker is also
+  installed at plugin import, because in client-server the filter
+  constructor runs on the server. `pvserver` exits when its client
+  disconnects.
+- **GPU (RTX 3070 Ti) is untested:** `nvidia-smi` reports "Driver/library
+  version mismatch" (the driver was updated without a reboot). `numba-cuda`
+  is available in the pinned nixpkgs. A CUDA port of `project2d` would mainly
+  help full-resolution frames at large N.
+

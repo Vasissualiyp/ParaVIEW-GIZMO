@@ -14,6 +14,12 @@ from pvgizmo import meshoid_ops as mo  # noqa: E402
 PLUGINS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugin")
 
 
+def dims(obj):
+    """(nx, ny, nz) of image or structured-grid output (vtkStructuredGrid.GetDimensions needs an argument)."""
+    e = obj.GetExtent()
+    return (e[1] - e[0] + 1, e[3] - e[2] + 1, e[5] - e[4] + 1)
+
+
 @pytest.fixture(scope="module", autouse=True)
 def plugins():
     for name, f in (("GIZMOSnapshotReader", "GIZMOReader.py"), ("MeshoidProjection", "MeshoidFilters.py")):
@@ -35,7 +41,7 @@ def image(filt, t=None):
     img = filt.GetClientSideObject().GetOutputDataObject(0)
     a = img.GetPointData().GetArray(0)
     v = ns.vtk_to_numpy(a)
-    nx, ny, _ = img.GetDimensions()
+    nx, ny, _ = dims(img)
     v = v.reshape((ny, nx) + v.shape[1:]).swapaxes(0, 1)  # VTK x-fastest -> [i, j]
     return img, a.GetName(), v
 
@@ -55,14 +61,15 @@ def test_projection_matches_core_and_geometry(reader, snapdir):
     p = pvs.MeshoidProjection(Input=reader, Normal=n, ViewUp=up, AutoWindow=0, Center=[0.1, 0, -0.2],
                               Size=4.0, Resolution=48)
     img, name, v = image(p)
-    assert name == "SurfaceDensity_Masses" and img.GetDimensions() == (48, 48, 1)
+    assert name == "SurfaceDensity_Masses" and dims(img) == (48, 48, 1)
     d = gas(snapdir)
     ref = mo.project("SurfaceDensity", d["Coordinates"], d["SmoothingLength"], [0.1, 0, -0.2], 4.0, 48,
                      normal=n, view_up=up, field=d["Masses"])
     np.testing.assert_allclose(v, ref, rtol=1e-12)
     pts = mo.slice_points([0.1, 0, -0.2], 4.0, 48, n, up)
+    assert img.GetClassName() == "vtkStructuredGrid"  # explicit points: survives client-server delivery
     for i, j in [(0, 0), (47, 3), (20, 31)]:
-        np.testing.assert_allclose(img.GetPoint(img.ComputePointId([i, j, 0])), pts[i * 48 + j], atol=1e-12)
+        np.testing.assert_allclose(img.GetPoint(i + 48 * j), pts[i * 48 + j], atol=1e-12)
 
 
 @pytest.mark.parametrize("mode,field,ncomp", [("Line-of-sight integral", "Density", 1),

@@ -3,7 +3,8 @@
 # tests/gui_live.py, wait until the scene is ready, then drag the mouse over the
 # render view with xdotool. Needs PV_GIZMO_LIVE_LOG, SNAPFILE, XDG_CONFIG_HOME.
 HERE="$(cd "$(dirname "$0")" && pwd)"
-paraview --script="$HERE/gui_live.py" & PP=$!
+# PV_GUI_ARGS: extra paraview arguments, e.g. --server-url=cs://localhost:PORT
+paraview $PV_GUI_ARGS --script="$HERE/gui_live.py" & PP=$!
 trap 'kill $PP 2>/dev/null' EXIT
 for _ in $(seq 120); do grep -q '"ready"' "$PV_GIZMO_LIVE_LOG" 2>/dev/null && break; sleep 0.5; done
 grep -q '"ready"' "$PV_GIZMO_LIVE_LOG" || { echo "GUI never became ready"; exit 1; }

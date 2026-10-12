@@ -22,7 +22,6 @@ import numpy as np
 
 import pvgizmo  # noqa: F401  (multiprocessing executable before numba loads)
 from meshoid import Meshoid
-from meshoid.grid_deposition import GridAverage, GridSurfaceDensityMulti
 
 MODES = ("SurfaceDensity", "LineIntegral", "MassWeightedAverage", "ProjectedAverage")
 
@@ -72,6 +71,44 @@ def _channels(f):
     return f.reshape(len(f), -1), f.shape[1:]
 
 
+def projection_channels(mode, field, masses=None, volume=None):
+    """View-independent per-particle channels of a projection; cache them across camera moves.
+
+    Returns (chans (N, k), tail shape of the field). SurfaceDensity uses the field in place.
+    """
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {MODES}")
+    if field is None:
+        raise ValueError(f"{mode} needs a field (e.g. Masses)")
+    f = np.asarray(field)
+    n, tail = len(f), f.shape[1:]
+    f2 = f.reshape(n, -1)
+    if mode == "SurfaceDensity":
+        chans = f2
+    elif mode == "LineIntegral":
+        chans = f2 * np.asarray(volume, dtype=np.float64)[:, None]
+    elif mode == "MassWeightedAverage":
+        if masses is None:
+            raise ValueError("MassWeightedAverage needs masses")
+        mm = np.asarray(masses, dtype=np.float64)
+        chans = np.column_stack([f2 * mm[:, None], mm])
+    else:  # ProjectedAverage: number-weighted, like meshoid's GridAverage
+        chans = np.column_stack([f2.astype(np.float64), np.ones(n)])
+    return np.ascontiguousarray(chans), tail
+
+
+def project_channels(mode, chans, tail, pos, h, center, size, res, normal=(0, 0, 1), view_up=(0, 1, 0),
+                     smooth_fac=1.0, depth=0.0):
+    """Deposit prepared channels along `normal` (the per-frame work of a camera move)."""
+    from pvgizmo.deposit import project2d
+    stacked = project2d(chans, pos, h, center, view_basis(normal, view_up), size, res,
+                        smooth_fac=smooth_fac, depth=depth)
+    if mode in ("MassWeightedAverage", "ProjectedAverage"):
+        with np.errstate(invalid="ignore", divide="ignore"):
+            stacked = stacked[..., :-1] / stacked[..., -1:]
+    return stacked.reshape((res, res) + tuple(tail))
+
+
 def project(mode, pos, h, center, size, res, normal=(0, 0, 1), view_up=(0, 1, 0), field=None,
             masses=None, volume=None, smooth_fac=1.0, depth=0.0, conservative=False, parallel=True):
     """Kernel-weighted projection along `normal`; returns a (res, res[, k]) array.
@@ -86,50 +123,42 @@ def project(mode, pos, h, center, size, res, normal=(0, 0, 1), view_up=(0, 1, 0)
     `field` may have several components (vectors are averaged per global component).
     h: GIZMO kernel radius H, clipped below at 2 pixels like meshoid does.
     depth > 0 keeps only particles with |distance along normal| < depth/2.
+    Same deposit as meshoid's GridSurfaceDensity (pvgizmo.deposit.project2d rotates,
+    culls and clips on the fly, so float32 inputs are never copied).
     """
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
+    if not (mode == "SurfaceDensity" and conservative):
+        chans, tail = projection_channels(mode, field, masses, volume)
+        return project_channels(mode, chans, tail, pos, h, center, size, res, normal, view_up,
+                                smooth_fac, depth)
+    # conservative: meshoid's conservative core renormalises a kernel over its in-window
+    # pixels (dumping the whole mass of an edge-crossing particle inside) and allocates
+    # (2H/dx)^2 per particle: use it only for kernels fully inside the window; the others
+    # go through the non-renormalised routine (correct partial deposit).
+    from meshoid.grid_deposition import GridSurfaceDensity
+    if field is None:
+        raise ValueError("SurfaceDensity needs a field (e.g. Masses)")
     basis = view_basis(normal, view_up)
     x = to_view(pos, center, basis)
     h = np.clip(smooth_fac * np.asarray(h, dtype=np.float64), 2.0 * size / res, None)
-    sel = np.abs(x[:, 2]) < depth / 2 if depth > 0 else slice(None)
-    x, h = x[sel], h[sel]
+    if depth > 0:
+        sel = np.abs(x[:, 2]) < depth / 2
+        x, h = x[sel], h[sel]
+    f, tail = _channels(field)
+    if depth > 0:
+        f = f[sel]
     origin = np.zeros(3)
     kw = dict(box_size=-1, parallel=parallel)
-    if field is not None:
-        f, tail = _channels(field)
-        f = f[sel]
-    if mode == "SurfaceDensity":
-        if field is None:
-            raise ValueError("SurfaceDensity needs a field (e.g. Masses)")
-        if conservative:
-            # meshoid's conservative core renormalises a kernel over its in-window pixels
-            # (dumping the whole mass of an edge-crossing particle inside) and allocates
-            # (2H/dx)^2 per particle: use it only for kernels fully inside the window; the
-            # others go through the non-renormalised routine (correct partial deposit).
-            from meshoid.grid_deposition import GridSurfaceDensity
-            inside = np.all(np.abs(x[:, :2]) + h[:, None] < size / 2, axis=1)
-            out = np.zeros((res, res, f.shape[1]))
-            for k in range(f.shape[1]):
-                if inside.any():
-                    out[..., k] += GridSurfaceDensity(f[inside, k], x[inside], h[inside], origin, size, res,
-                                                      conservative=True, **kw)
-                if (~inside).any():
-                    out[..., k] += GridSurfaceDensity(f[~inside, k], x[~inside], h[~inside], origin, size,
-                                                      res, conservative=False, **kw)
-        else:
-            out = GridSurfaceDensityMulti(f, x, h, origin, size, res, **kw)
-    elif mode == "LineIntegral":
-        vol = np.asarray(volume, dtype=np.float64)[sel]
-        out = GridSurfaceDensityMulti(f * vol[:, None], x, h, origin, size, res, **kw)
-    elif mode == "MassWeightedAverage":
-        m = np.asarray(masses, dtype=np.float64)[sel]
-        stacked = GridSurfaceDensityMulti(np.column_stack([f * m[:, None], m]), x, h, origin, size, res, **kw)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            out = stacked[..., :-1] / stacked[..., -1:]
-    else:  # ProjectedAverage
-        out = np.stack([GridAverage(f[:, k], x, h, origin, size, res, parallel=parallel)
-                        for k in range(f.shape[1])], axis=-1)
+    inside = np.all(np.abs(x[:, :2]) + h[:, None] < size / 2, axis=1)
+    out = np.zeros((res, res, f.shape[1]))
+    for k in range(f.shape[1]):
+        if inside.any():
+            out[..., k] += GridSurfaceDensity(f[inside, k], x[inside], h[inside], origin, size, res,
+                                              conservative=True, **kw)
+        if (~inside).any():
+            out[..., k] += GridSurfaceDensity(f[~inside, k], x[~inside], h[~inside], origin, size,
+                                              res, conservative=False, **kw)
     return out.reshape((res, res) + tail)
 
 

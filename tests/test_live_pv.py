@@ -12,6 +12,12 @@ from pvgizmo import live  # noqa: E402
 PLUGINS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugin")
 
 
+def dims(obj):
+    """(nx, ny, nz) of image or structured-grid output (vtkStructuredGrid.GetDimensions needs an argument)."""
+    e = obj.GetExtent()
+    return (e[1] - e[0] + 1, e[3] - e[2] + 1, e[5] - e[4] + 1)
+
+
 @pytest.fixture(scope="module", autouse=True)
 def plugins():
     for name, f in (("GIZMOSnapshotReader", "GIZMOReader.py"), ("MeshoidProjection", "MeshoidFilters.py")):
@@ -38,10 +44,11 @@ def scene(snapdir):
 def image_plane(p):
     p.UpdatePipeline()
     img = p.GetClientSideObject().GetOutputDataObject(0)
-    m = img.GetDirectionMatrix()
-    normal = np.array([m.GetElement(i, 2) for i in range(3)])
-    nx, ny, _ = img.GetDimensions()
-    center = np.array(img.GetPoint(img.ComputePointId([nx // 2, ny // 2, 0])))
+    nx, ny, _ = dims(img)
+    p00, p10, p01 = (np.array(img.GetPoint(k)) for k in (0, 1, nx))  # geometry from the actual points
+    normal = np.cross(p10 - p00, p01 - p00)
+    normal /= np.linalg.norm(normal)
+    center = np.array(img.GetPoint(nx // 2 + nx * (ny // 2)))
     return normal, center, img
 
 
@@ -85,10 +92,10 @@ def test_interactive_resolution_and_release(scene):
     view.GetActiveCamera().Azimuth(10)
     assert p.Resolution == 16
     pvs.Render(view)
-    assert image_plane(p)[2].GetDimensions()[:2] == (16, 16)
+    assert dims(image_plane(p)[2])[:2] == (16, 16)
     view.SMProxy.InvokeEvent("EndInteractionEvent")
     assert p.Resolution == 64 and not link._interacting
-    assert image_plane(p)[2].GetDimensions()[:2] == (64, 64)
+    assert dims(image_plane(p)[2])[:2] == (64, 64)
 
 
 def test_ignores_non_geometric_camera_changes(scene, monkeypatch):

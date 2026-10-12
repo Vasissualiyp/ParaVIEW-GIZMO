@@ -56,20 +56,38 @@ def test_gui_smoke(snapdir, tmp_path):
 
 @pytest.mark.skipif(not (shutil.which("xvfb-run") and shutil.which("paraview") and shutil.which("xdotool")),
                     reason="needs xvfb-run, paraview and xdotool (nix develop)")
-def test_live_mouse_drag(snapdir, tmp_path):
+@pytest.mark.parametrize("session", ["builtin", "client_server"])
+def test_live_mouse_drag(snapdir, tmp_path, session):
     """A real mouse drag in the Qt GUI re-aims a FollowCamera projection, live.
 
     Checks the whole chain: Qt mouse events -> ParaView camera -> pvgizmo.live link
     (auto-installed for FollowCamera=1) -> filter re-executes at the interactive
-    resolution while dragging -> one full-resolution run after release.
+    resolution while dragging -> one full-resolution run after release. In the
+    client_server case the GUI is connected to a local pvserver, which executes
+    the filter (as on a cluster).
     """
     import json
+    import socket
+    import time
     cfg = tmp_path / "config"
     (cfg / "ParaView").mkdir(parents=True)
     (cfg / "ParaView" / "ParaView.ini").write_text("[General]\nGeneralSettings.ShowWelcomeDialog=false\n")
     log = tmp_path / "live.log"
     env = dict(os.environ, XDG_CONFIG_HOME=str(cfg), PV_GIZMO_LIVE_LOG=str(log),
                SNAPFILE=f"{snapdir}/single/snapshot_000.hdf5")
+    server = None
+    if session == "client_server":
+        with socket.socket() as sock:
+            sock.bind(("localhost", 0))
+            port = sock.getsockname()[1]
+        server = subprocess.Popen(["pvserver", f"--server-port={port}", "--force-offscreen-rendering"], env=env,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        for _ in range(100):
+            with socket.socket() as sock:
+                if sock.connect_ex(("localhost", port)) == 0:
+                    break
+            time.sleep(0.1)
+        env["PV_GUI_ARGS"] = f"--server-url=cs://localhost:{port}"
     p = subprocess.Popen(["xvfb-run", "-a", "-s", "-screen 0 1280x1024x24", f"{HERE}/gui_drag.sh"], env=env,
                          text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     try:
@@ -78,6 +96,9 @@ def test_live_mouse_drag(snapdir, tmp_path):
         os.killpg(p.pid, signal.SIGKILL)
         out, _ = p.communicate()
         pytest.fail("GUI drag test hung:\n" + out[-3000:])
+    finally:
+        if server is not None:
+            os.killpg(server.pid, signal.SIGKILL)
     assert "GUI_DRAG_DONE" in out, out[-3000:]
     ev = [json.loads(line) for line in log.read_text().splitlines()]
     ready = next(e for e in ev if e["event"] == "ready")

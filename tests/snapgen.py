@@ -123,3 +123,29 @@ def make_standard_set(outdir):
 
 if __name__ == "__main__":
     print(make_standard_set(sys.argv[1] if len(sys.argv) > 1 else "testdata"))
+
+
+def make_big(path_base, n, background_frac=0.2, seed=0, des_ngb=32):
+    """Large benchmark snapshot: Plummer sphere (a=1) + uniform background, gas only.
+
+    Kernel radii and densities are analytic (no neighbour search, so 10^7+ particles
+    take seconds), spanning ~4 decades like zoom/cutout data. float32 on disk.
+    """
+    rng = np.random.default_rng(seed)
+    nb = int(n * background_frac)
+    npl = n - nb
+    m = np.full(n, 1.0 / n)
+    x = np.empty((n, 3))
+    x[:npl] = plummer(npl, rng=rng)
+    L = 40.0
+    x[npl:] = rng.uniform(-L / 2, L / 2, (nb, 3))
+    r2 = np.sum(x**2, axis=1)
+    rho = (1 - background_frac) * 3 / (4 * np.pi) * (1 + r2) ** -2.5 + background_frac / L**3
+    H = (3 * des_ngb * m / (4 * np.pi * rho)) ** (1 / 3)
+    gas = dict(Coordinates=x.astype(np.float32), Masses=m.astype(np.float32),
+               SmoothingLength=H.astype(np.float32), Density=rho.astype(np.float32),
+               Velocities=rng.normal(size=(n, 3)).astype(np.float32),
+               InternalEnergy=rng.uniform(1, 2, n).astype(np.float32),
+               ParticleIDs=np.arange(1, n + 1, dtype=np.uint32))
+    write_snapshot(path_base, {0: gas}, np.zeros(6))
+    return f"{path_base}.hdf5"

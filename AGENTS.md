@@ -18,7 +18,9 @@ pvgizmo/             pure-Python core, no ParaView dependency except vtkconv (VT
   vtkconv.py         numpy -> vtkPolyData / vtkImageData (zero-copy)
   meshoid_ops.py     view bases, projections/slices at any orientation, 3D grids, derived
                      fields, Meshoid LRU cache
-  deposit.py         numba 3D kernel deposition, correct for kernels crossing the box (zoom data)
+  deposit.py         numba kernels: project2d (per-frame projection: in-loop rotation/culling,
+                     float32 in place) and deposit3d (3D, correct for box-crossing kernels)
+bench/bench.py       Phase 4 benchmark (synthetic 1M-16M snapshots)
   pvhelpers.py       client-side: open_snapshot, show_particles, add_projection,
                      project_along_camera, show_map (needs paraview.simple)
   live.py            client-side camera links: maps follow the view (rotate/zoom/pan), low-res
@@ -57,7 +59,13 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
   and slice geometry.
 - `test_reader_pv.py` / `test_filters_pv.py` / `test_live_pv.py` cover the
   plugins and camera links through the server manager.
-- `test_gui.py::test_live_mouse_drag` starts the GUI with `tests/gui_live.py`
+- `test_client_server.py` runs `tests/cs_client.py` against a real local
+  `pvserver`. It checks plugin loading on both sides, camera-following, and
+  rotated maps keeping their orientation through client delivery.
+- Performance: `nix develop -c pvpython bench/bench.py [N ...]` (writes
+  `testdata/bench_*.hdf5`). Re-run it after touching `pvgizmo/deposit.py` or
+  the filters, and update the FINDINGS numbers.
+- `test_gui.py::test_live_mouse_drag` (builtin and client_server) starts the GUI with `tests/gui_live.py`
   (no `--exit`, so the Qt loop runs) and **drags the real mouse with xdotool**
   (`tests/gui_drag.sh`). It asserts on the JSON events that `pvgizmo.live`
   and the filter write to `$PV_GIZMO_LIVE_LOG`. This is the interactivity
@@ -101,6 +109,12 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
   windows that cut kernels.** They renormalise onto in-box nodes (see
   FINDINGS). Use `pvgizmo.deposit` / `meshoid_ops.grid3d_deposit`. 3D nodes
   coincide with the 2D map nodes.
+- **2D maps are `vtkStructuredGrid`** (explicit points), *not* `vtkImageData` with
+  a direction matrix: ParaView's client-server delivery drops the direction
+  matrix. 3D grids are axis-aligned `vtkImageData`.
+- **Per-frame cost:** keep everything view-independent out of the per-camera-move
+  path (cache it in `_VIEW_CACHE` keyed on VTK array address + MTime), and never
+  cast or copy the particle arrays per frame.
 - **Image grids:** projections and slices use meshoid's non-periodic
   *node* grid, `linspace(-size/2, size/2, res)` along the image axes u and v.
   The view basis is right-handed (u, v, n), with n the line of sight and

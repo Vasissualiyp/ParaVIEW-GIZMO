@@ -3,7 +3,7 @@
 import numpy as np
 from vtkmodules.util import numpy_support as ns
 from vtkmodules.vtkCommonCore import vtkPoints
-from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkImageData, vtkPolyData
+from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkImageData, vtkPolyData, vtkStructuredGrid
 
 
 def to_vtk_array(arr, name):
@@ -78,3 +78,25 @@ def image_from_array(values, origin, spacing, direction=None, name="values"):
     img.GetPointData().AddArray(to_vtk_array(flat, name))
     img.GetPointData().SetActiveScalars(name)
     return img
+
+
+def structured_grid_from_array(values, points, name="values"):
+    """2D map on an arbitrarily oriented plane -> vtkStructuredGrid with explicit points.
+
+    values: (nx, ny[, k]); points: (nx, ny, 3), both indexed [i, j]. Used instead of
+    vtkImageData + direction matrix because ParaView's client-server delivery drops
+    the direction matrix (a rotated map would arrive axis-aligned on the client).
+    """
+    v = np.asarray(values)
+    nx, ny = v.shape[:2]
+    ncomp = int(np.prod(v.shape[2:])) if v.ndim > 2 else 1
+    sg = vtkStructuredGrid()
+    sg.SetDimensions(nx, ny, 1)
+    pts = vtkPoints()
+    pts.SetData(to_vtk_array(np.asarray(points, dtype=np.float64).transpose(1, 0, 2).reshape(-1, 3), "Points"))
+    sg.SetPoints(pts)
+    flat = v.reshape(nx, ny, ncomp).transpose(1, 0, 2).reshape(-1, ncomp)  # VTK: i fastest
+    sg.GetPointData().AddArray(to_vtk_array(flat[:, 0] if ncomp == 1 else flat, name))
+    sg.GetPointData().SetActiveScalars(name)
+    return sg
+
