@@ -70,3 +70,36 @@ def test_reader_all_arrays(snap):
             a = pd.GetPointData().GetArray(k)
             assert a is not None, k
             assert a.GetNumberOfComponents() == int(np.prod(shape)) if shape else 1
+
+
+def test_projection_matches_guac_pattern(snap):
+    """Phase 2 acceptance: plugin map == GUAC's `Meshoid(pos, m, hsml).SurfaceDensity(M.m, ...)`."""
+    import time
+    from meshoid import Meshoid
+    pvs = pytest.importorskip("paraview.simple")
+    for name, f in (("GIZMOSnapshotReader", "GIZMOReader.py"), ("MeshoidProjection", "MeshoidFilters.py")):
+        if not hasattr(pvs, name):
+            pvs.LoadPlugin(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                        "plugin", f), remote=False)
+    parts = io.snapshot_parts(snap)
+    d = io.read_ptype(parts, 0, ["Masses", "SmoothingLength", "Density"])
+    pos = d["Coordinates"].astype(np.float64)
+    center = pos[np.argmax(d["Density"])]
+    size = 4 * np.median(np.linalg.norm(pos - center, axis=1))
+    res = 256
+    M = Meshoid(pos, d["Masses"], d["SmoothingLength"])  # as in GUAC gal_viz.py & co.
+    ref = M.SurfaceDensity(M.m, center=center, size=size, res=res)
+
+    r = pvs.GIZMOSnapshotReader(FileNames=[snap])
+    r.UpdatePipeline()
+    p = pvs.MeshoidProjection(Input=r, AutoWindow=0, Center=list(center), Size=size, Resolution=res)
+    t = time.time()
+    p.UpdatePipeline()
+    dt = time.time() - t
+    img = p.GetClientSideObject().GetOutputDataObject(0)
+    from vtkmodules.util import numpy_support as vns
+    v = vns.vtk_to_numpy(img.GetPointData().GetArray(0)).reshape(res, res).T
+    # ~1e-8 differences: the m12f cutouts are 6e-5 kpc across at ~1948 kpc, so centring before
+    # vs. inside the deposition loses ~3e-9 of relative position precision in float64.
+    np.testing.assert_allclose(v, ref, rtol=1e-6, atol=1e-9 * ref.max())
+    print(f"\n{os.path.basename(snap)}: N_gas={len(pos)} res={res} projection {dt:.2f}s")

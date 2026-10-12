@@ -138,3 +138,45 @@ Important limits:
   smoothing length h with support of about 2h for cubic splines. Using ParaView's
   built-in SPH filters therefore needs a factor-of-2 conversion; check
   `vtkSPHKernel` before relying on it.
+
+## Phase 2 findings (2026-10-12)
+- **meshoid's deposition grid is a node grid.** In non-periodic mode every
+  deposition routine (2D/3D, CPU/CUDA) puts values at
+  `-size/2 + k·size/(res-1)`, corner to corner. Reconstruction (`Slice`,
+  `InterpToGrid`) uses cell centres instead, so meshoid's slices and
+  projections are offset by up to half a pixel and scaled by res/(res-1).
+  "Conservative" deposition conserves mass exactly only with pixel area
+  `(size/(res-1))²`; with `(size/res)²` it looks about 3% low at res=64.
+  Our filters put **both** slices and projections on the node grid, so they
+  overlay exactly (`pvgizmo.meshoid_ops.grid_coords`, `pixel_area`). This is
+  worth reporting upstream: the docs don't say it.
+- **Projections need no KD-tree** when H is known (gas). Every
+  `SurfaceDensity`/`Projection`/`MassWeightedAverage`/`ProjectedAverage` is
+  a thin wrapper around `grid_deposition.GridSurfaceDensity[Multi]` /
+  `GridAverage`. We call these directly on coordinates rotated into the view
+  frame, so changing orientation is just a rotation. Volumes for the
+  line-of-sight integral are `m/Density` from the snapshot (GIZMO's own),
+  falling back to meshoid's `4π/3 H³/32`.
+- **Speed:** 561k gas cells at 256² take 0.06 s (numba-threaded, JIT cached
+  in `NUMBA_CACHE_DIR`), so maps update interactively. Slices build a
+  KD-tree once, cached per block in an LRU of 2.
+- **Real-data acceptance:** the plugin map equals GUAC's
+  `Meshoid(pos, m, hsml).SurfaceDensity(M.m, center, size, res)` on m12f
+  snapshots 259 and 177 to about 1e-8 relative (float64 rounding at a
+  1948 kpc offset).
+- **GUAC `scripts/gal_viz.py` plots transposed maps.** It calls
+  `np.meshgrid(X, Y)` (default `xy` indexing) then `pcolormesh(X, Y, sigma)`,
+  but meshoid's first index is x. Other GUAC scripts use `indexing='ij'`,
+  which is correct. Not changed here, since it's the user's repo.
+- **Array-selection defaults need an executed input.** A filter's `Field`
+  default (`Masses`/`Density`) only applies if the input has already run
+  when the filter is created. The GUI always does this; in scripts call
+  `UpdatePipeline()` on the reader first (`pvhelpers.open_snapshot` does).
+  Multi-element string defaults need `default_values_delimiter=";"`.
+- **Python-plugin decorators** take the number of elements from the method
+  signature, so pass `number_of_elements` explicitly when wrapping. Class
+  decorators that add properties must be innermost, below `@smproxy.filter`.
+- **Colour maps:** collapsing clouds span about 8 decades in column density.
+  A fixed "max/1e4" log range gives a black image, so `pvhelpers.show_map`
+  uses the 1st–99.9th percentiles of positive pixels.
+

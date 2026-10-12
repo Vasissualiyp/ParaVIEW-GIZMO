@@ -16,8 +16,13 @@ flake.nix            nix dev shell: ParaView 6.0.1 + meshoid deps + C++ toolchai
 pvgizmo/             pure-Python core, no ParaView dependency except vtkconv (VTK only)
   io.py              snapshot discovery, headers, field lists, strided/cropped reads, units
   vtkconv.py         numpy -> vtkPolyData / vtkImageData (zero-copy)
+  meshoid_ops.py     view bases, projections/slices at any orientation, Meshoid LRU cache
+  pvhelpers.py       client-side: open_snapshot, show_particles, add_projection,
+                     project_along_camera, show_map (needs paraview.simple)
 plugin/              ParaView Python plugins (auto-loaded via PV_PLUGIN_PATH in the shell)
   GIZMOReader.py     "GIZMO Snapshot Reader" -> vtkPartitionedDataSetCollection
+  MeshoidFilters.py  "Meshoid Projection", "Meshoid Slice" (menu: Filters > GIZMO) -> 2D vtkImageData
+macros/              ParaView macros (Macros > Import new macro): ProjectAlongCamera, GIZMOQuickLook
 tests/               pytest; snapgen.py writes synthetic GIZMO snapshots
 meshoid/             git-ignored local clone (pinned; recreated by the shellHook)
 ```
@@ -41,7 +46,11 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
 ```
 - `test_io.py` / `test_vtkconv.py` cover the core. `test_io.py` checks
   against meshoid's `load_from_snapshot`, the reference loader.
-- `test_reader_pv.py` covers the reader through the server manager.
+- `test_meshoid_ops.py` checks every projection mode against meshoid's own
+  methods, rotated views against permuted data, exact mass conservation,
+  and slice geometry.
+- `test_reader_pv.py` / `test_filters_pv.py` cover the plugins through the
+  server manager.
 - `test_gui.py` runs the real Qt client under `xvfb-run`
   (`tests/gui_smoke.py`). It takes about 10 s. Set `PV_GIZMO_KEEP_SHOT=x.png`
   to keep the screenshot.
@@ -74,6 +83,11 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
   than float32 spacing at their absolute position, and rendering is float32.
   Anything new must work in this recentred frame. Don't cast absolute
   coordinates to float32.
+- **Image grids:** projections and slices use meshoid's non-periodic
+  *node* grid, `linspace(-size/2, size/2, res)` along the image axes u and v.
+  The view basis is right-handed (u, v, n), with n the line of sight and
+  u = v × n. Images are `vtkImageData` with a direction matrix (columns
+  u, v, n). Pixel area is `(size/(res-1))²`.
 - Header particle counts can be larger than what's stored. Cutout snapshots
   keep `NumPart_Total` but drop groups. Trust the groups, not the header.
 - `pvgizmo/__init__.py` must be imported before numba or meshoid in anything
@@ -107,6 +121,11 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
     timeout. `timeout xvfb-run ...` leaves orphaned `paraview`/`Xvfb`
     processes behind. Clean up with `pkill -x .paraview-wrapp; pkill -x Xvfb`.
     Don't use `pkill -f` with a pattern that also matches your own shell.
+- A filter's array-selection default only applies if its input has already
+  run. Call `reader.UpdatePipeline()` before creating filters in scripts.
+- `paraview.util.vtkAlgorithm` decorators take the number of elements from
+  the method signature. Wrappers with `*args` need an explicit
+  `number_of_elements`.
 - Point Gaussian properties in 6.0: `SetScaleArray`, `ScaleByArray`,
   `UseScaleFunction`, `GaussianRadius`, `ShaderPreset`. There is no
   `ScaleArray`.

@@ -180,7 +180,7 @@ docs/
 |---|---|---|
 | 0 | Nix dev shell (done) | pvpython + GUI import meshoid; Python **and C++** plugins build and load; multiprocessing fix |
 | 1 | Reader + synthetic test snapshots (**done 2026-10-12**: 28 synthetic tests + 12 opt-in real-data tests on FIRE m12f cutouts) | single- and multi-part snapshots and time series open in the GUI, with arrays selectable |
-| 2 | Projection + Slice filters | maps match meshoid/GUAC scripts on the same data |
+| 2 | Projection + Slice filters (**done 2026-10-12**: any orientation, 4 projection modes, slices of order 0–2, camera-aimed projection, presets/macros; matches GUAC on m12f data to ~1e-8) | maps match meshoid/GUAC scripts on the same data |
 | 3 | Grid + Derived Fields; Point Gaussian preset | volume rendering and contours of gas density work |
 | 4 | Performance | profile real FIRE/STARFORGE data. Options: C++ reader (HDF5) and/or C++ deposition; MPI-parallel reading split by file parts; `pvserver` on a cluster with client–server mode; CUDA backend (`numba-cuda`) |
 | 5 | Packaging | Nix package for the plugin; documented usage; optional VisIt route (not yet investigated) |

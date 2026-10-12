@@ -55,8 +55,10 @@ def add_field_data(obj, field_data):
 
 
 def image_from_array(values, origin, spacing, direction=None, name="values"):
-    """(nx, ny[, nz]) numpy array (x fastest *last* index convention: values[i, j, k]
-    at origin + i*dx*u + j*dy*v + k*dz*w) -> vtkImageData with point data `name`.
+    """numpy values[i, j, k(, comp...)] at origin + i*dx*u + j*dy*v + k*dz*w -> vtkImageData.
+
+    A 2D array is a 2D scalar image. Anything else is read as (nx, ny, nz, comp...):
+    a 2D *vector* image must be passed as (nx, ny, 1, k), not (nx, ny, k).
     """
     v = np.asarray(values)
     if v.ndim == 2:

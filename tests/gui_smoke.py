@@ -57,6 +57,16 @@ try:
     ResetCamera(view)
     Render(view)
     SaveScreenshot(os.environ["SHOT"], view, ImageResolution=[800, 600])
+    # Phase 2: column-density projection aimed at the current camera, shown with the preset
+    from pvgizmo import pvhelpers
+    proj = pvs.MeshoidProjection(Input=r, Resolution=128)
+    pvhelpers.project_along_camera(proj, view, render=False)
+    pvs.Hide(gas, view)
+    pvhelpers.show_map(proj, view)
+    Render(view)
+    SaveScreenshot(os.environ["SHOT"].replace(".png", "_proj.png"), view, ImageResolution=[800, 600])
+    n_img = proj.GetDataInformation().GetNumberOfPoints()
+    assert n_img == 128 * 128, n_img
     print("GUI_SMOKE_OK", gas.GetDataInformation().GetNumberOfPoints(), flush=True)
 except Exception:
     # the GUI redirects sys.stderr into its output window; use the real stdout
