@@ -67,8 +67,67 @@ def make_particles(ngas=4000, nstar=500, ndm=2000, seed=0, t=0.0):
     return {0: gas, 1: dm, 4: stars}, mtab
 
 
+FIRE_UNITS = dict(UnitLength_In_CGS=3.085678e21, UnitMass_In_CGS=1.989e43, UnitVelocity_In_CGS=1e5)
+
+
+def make_galaxy(ngas=6000, nstar=3000, seed=5):
+    """FIRE-like disc galaxy at z = 0 (kpc, 1e10 Msun, km/s; a = 1, h = 0.7).
+
+    Stars: young (blue) ones in a thin star-forming ring, old (red) ones in a bulge;
+    StellarFormationTime are scale factors. Gas: a dusty disc (solar metallicity)
+    with a hole in the middle, so the bulge is seen unobscured face-on.
+    """
+    from meshoid import Meshoid
+
+    rng = np.random.default_rng(seed)
+    r = rng.uniform(2.0, 8.0, ngas)
+    phi = rng.uniform(0, 2 * np.pi, ngas)
+    xg = np.column_stack([r * np.cos(phi), r * np.sin(phi), rng.normal(0, 0.15, ngas)])
+    mg = np.full(ngas, 1.0 / ngas)  # 1e10 Msun: ~50 Msun/pc^2, tau_u ~ 1 face-on
+    M = Meshoid(xg, mg, n_jobs=1)
+    gas = dict(Coordinates=xg, Masses=mg, SmoothingLength=M.SmoothingLength(), Density=M.Density(),
+               Velocities=np.zeros((ngas, 3)), InternalEnergy=rng.uniform(10, 1000, ngas),
+               Temperature=10 ** rng.uniform(1, 6, ngas),
+               Metallicity=np.column_stack([np.full(ngas, 0.02), np.zeros((ngas, 10))]))
+    gas = {k: v.astype(np.float32) for k, v in gas.items()}
+    nyoung = nstar // 2
+    ry = rng.uniform(4.0, 6.0, nyoung)
+    py = rng.uniform(0, 2 * np.pi, nyoung)
+    young = np.column_stack([ry * np.cos(py), ry * np.sin(py), rng.normal(0, 0.1, nyoung)])
+    old = plummer(nstar - nyoung, 1.0, rng)
+    stars = dict(
+        Coordinates=np.r_[young, old].astype(np.float32),
+        Masses=np.full(nstar, 1e-5, np.float32),
+        Velocities=np.zeros((nstar, 3), np.float32),
+        # young: formed at a > 0.99 (< ~100 Myr ago); old: a < 0.3 (> ~10 Gyr ago)
+        StellarFormationTime=np.r_[rng.uniform(0.993, 0.9999, nyoung),
+                                   rng.uniform(0.15, 0.3, nstar - nyoung)].astype(np.float32),
+        Metallicity=np.column_stack([np.r_[np.full(nyoung, 0.02), np.full(nstar - nyoung, 0.004)],
+                                     np.zeros((nstar, 10))]).astype(np.float32),
+    )
+    return {0: gas, 4: stars}, np.zeros(6)
+
+
+def make_sinks(ngas=3000, nsink=40, seed=6):
+    """STARFORGE-like cloud with sink particles (PartType5) carrying StarLuminosity_Solar."""
+    from meshoid import Meshoid
+
+    rng = np.random.default_rng(seed)
+    xg = plummer(ngas, 1.0, rng)
+    mg = np.full(ngas, 1e3 / ngas)
+    M = Meshoid(xg, mg, n_jobs=1)
+    gas = dict(Coordinates=xg, Masses=mg, SmoothingLength=M.SmoothingLength(), Density=M.Density(),
+               Velocities=np.zeros((ngas, 3)), InternalEnergy=rng.uniform(1, 2, ngas))
+    gas = {k: v.astype(np.float32) for k, v in gas.items()}
+    ms = 10 ** rng.uniform(-1, 1.5, nsink)
+    sinks = dict(Coordinates=plummer(nsink, 0.5, rng).astype(np.float32), Masses=ms.astype(np.float32),
+                 Velocities=np.zeros((nsink, 3), np.float32),
+                 StarLuminosity_Solar=(ms**3.5).astype(np.float32))
+    return {0: gas, 5: sinks}, np.zeros(6)
+
+
 def write_snapshot(path_base, parts, mtab, time=0.0, redshift=0.0, hubble=1.0,
-                   cosmological=False, nfiles=1, boxsize=0.0):
+                   cosmological=False, nfiles=1, boxsize=0.0, units=None):
     """Write `parts` to `path_base`.hdf5 (nfiles == 1) or `path_base`.<k>.hdf5."""
     os.makedirs(os.path.dirname(path_base) or ".", exist_ok=True)
     ntot = np.zeros(6, dtype=np.int64)
@@ -98,7 +157,7 @@ def write_snapshot(path_base, parts, mtab, time=0.0, redshift=0.0, hubble=1.0,
             h["Omega_Matter"] = 0.3 if cosmological else 0.0
             h["Omega_Lambda"] = 0.7 if cosmological else 0.0
             h["ComovingIntegrationOn"] = np.int32(cosmological)
-            for u, v in UNITS.items():
+            for u, v in (units or UNITS).items():
                 h[u] = v
 
 
@@ -118,6 +177,11 @@ def make_standard_set(outdir):
         if "SmoothingLength" in d:
             d["SmoothingLength"] = d["SmoothingLength"] * np.float32(scale)
     write_snapshot(f"{outdir}/zoom/snapshot_000", zoom, zt)
+    gal, gt = make_galaxy()
+    write_snapshot(f"{outdir}/galaxy/snapshot_600", gal, gt, time=1.0, redshift=0.0, hubble=0.7,
+                   cosmological=True, units=FIRE_UNITS)
+    sk, st = make_sinks()
+    write_snapshot(f"{outdir}/sinks/snapshot_010", sk, st)
     return outdir
 
 

@@ -44,7 +44,8 @@ def test_single(pv, snapdir):
     r = pv["GIZMOSnapshotReader"](FileNames=[f"{snapdir}/single/snapshot_000.hdf5"], Recenter=0)
     r.UpdatePipelineInformation()
     assert sorted(r.ParticleTypes.Available) == ["DarkMatter", "Gas", "Stars"]
-    assert "Metallicity" in r.PointArrays.Available and "Metallicity" not in r.PointArrays
+    assert "ParticleIDs" in r.PointArrays.Available and "ParticleIDs" not in r.PointArrays
+    assert "Metallicity" in r.PointArrays and "StellarFormationTime" in r.PointArrays  # starlight inputs
     data, b = blocks(r)
     assert sorted(b) == ["DarkMatter", "Gas", "Stars"]
     gas = b["Gas"]

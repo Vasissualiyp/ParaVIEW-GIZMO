@@ -159,3 +159,138 @@ def add_slice(source, block="Gas", field="Density", view=None, follow=False, **p
         live.follow_camera(s, view)
     show_map(s, view)
     return s
+
+
+# --------------------------------------------------------------------------- space look (Phase 6)
+# Point Gaussian fragment code: white-hot core, soft halo and faint diffraction spikes. With
+# Emissive on, the mapper blends additively, so overlapping stars add up and glow.
+STAR_SHADER = """//VTK::Color::Impl
+  float r2 = dot(offsetVCVSOutput.xy, offsetVCVSOutput.xy);
+  if (r2 > 9.0) { discard; }
+  float core = exp(-8.0 * r2);
+  float halo = 0.25 * exp(-1.2 * r2);
+  float spike = 0.12 * (exp(-40.0 * offsetVCVSOutput.x * offsetVCVSOutput.x)
+                      + exp(-40.0 * offsetVCVSOutput.y * offsetVCVSOutput.y)) * exp(-0.6 * r2);
+  diffuseColor = mix(diffuseColor, vec3(1.0), 0.7 * clamp(core, 0.0, 1.0));
+  ambientColor = diffuseColor;
+  opacity = opacity * clamp(core + halo + spike, 0.0, 1.0);
+"""
+# appended when stars must draw over opaque maps (which sit at the focal plane): keep the
+# depth order among stars but move them all in front of everything else
+STAR_ON_TOP = "  gl_FragDepth = 1e-3 * gl_FragCoord.z;\n"
+
+
+def space_view(view=None):
+    """Black background, no orientation axes: the canvas for glowing gas and stars."""
+    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    view.UseColorPaletteForBackground = 0
+    view.BackgroundColorMode = "Single Color"
+    view.Background = [0.0, 0.0, 0.0]
+    view.OrientationAxesVisibility = 0
+    return view
+
+
+def show_rgb(filt, view=None):
+    """Show an RGB map (Starlight Image, Meshoid Composite) with its colours used directly."""
+    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    rep = pvs.Show(filt, view)
+    rep.SetRepresentationType("Surface")
+    pvs.ColorBy(rep, ("POINTS", "RGB"))
+    rep.MapScalars = 0
+    rep.Ambient, rep.Diffuse = 1.0, 0.0  # unlit: the image's colours, not shaded ones
+    rep.SetScalarBarVisibility(view, False)
+    return rep
+
+
+def show_space_map(filt, view=None, preset="Magma (matplotlib)", percentiles=(1.0, 99.9)):
+    """A Meshoid Projection as glowing gas: log colour map on black (vizmo's default look)."""
+    view = space_view(view)
+    rep = show_map(filt, view, log=True, preset=preset, percentiles=percentiles)
+    rep.Ambient, rep.Diffuse = 1.0, 0.0
+    rep.SetScalarBarVisibility(view, False)
+    return rep
+
+
+def show_stars(source, block="Stars", view=None, size_scale=2.0, opacity=1.0, on_top=True, **props):
+    """Glowing stars: GIZMO Star Properties on `block`, drawn as additive Point Gaussian splats.
+
+    Colour = StarRGB (band ratios: young blue, old red), size grows with log L. on_top: draw
+    over maps (images are opaque planes through the focal point). Returns (filter, rep).
+    """
+    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    sp = pvs.GIZMOStarProperties(Input=source, Block=block, SizeScale=size_scale, **props)
+    ext = pvs.ExtractBlock(Input=sp, Selectors=[f"/Root/{block}"])
+    rep = pvs.Show(ext, view)
+    rep.SetRepresentationType("Point Gaussian")
+    rep.ShaderPreset = "Custom"
+    rep.CustomShader = STAR_SHADER + (STAR_ON_TOP if on_top else "")
+    rep.Emissive = 1
+    rep.ScaleByArray = 1
+    rep.SetScaleArray = ["POINTS", "StarSize"]
+    rep.UseScaleFunction = 0
+    rep.GaussianRadius = 1.0
+    rep.Opacity = opacity
+    pvs.ColorBy(rep, ("POINTS", "StarRGB"))
+    rep.MapScalars = 0
+    rep.Ambient, rep.Diffuse = 1.0, 0.0
+    rep.SetScalarBarVisibility(view, False)
+    return sp, rep
+
+
+def add_starlight(source, view=None, follow=False, **props):
+    """GIZMO Starlight Image (FIRE-style three-band stars with dust) on a black view."""
+    view = space_view(view)
+    s = pvs.GIZMOStarlightImage(Input=source, **props)
+    if follow:
+        from pvgizmo import live
+        live.follow_camera(s, view)
+    show_rgb(s, view)
+    return s
+
+
+def add_composite(source, view=None, follow=False, **props):
+    """Meshoid Composite (brightness = column density, colour = e.g. temperature) on a black view."""
+    view = space_view(view)
+    if "Field2" not in props:  # the array domain would fall back to the first array (Density)
+        source.UpdatePipeline()
+        keys = source.PointData.keys()
+        f2 = next((k for k in ("Temperature", "InternalEnergy") if k in keys), None)
+        if f2:
+            props["Field2"] = ["POINTS", f2]
+    c = pvs.MeshoidComposite(Input=source, **props)
+    if follow:
+        from pvgizmo import live
+        live.follow_camera(c, view)
+    show_rgb(c, view)
+    return c
+
+
+def block_names(source):
+    """Names of the top-level blocks of a composite source (e.g. ['Gas', 'Stars']), from its
+    data information (nothing is fetched to the client)."""
+    source.UpdatePipeline()
+    h = source.GetDataInformation().DataInformation.GetHierarchy()
+    if h is None:
+        return []
+    return [h.GetNodeName(n) for n in h.GetChildNodes(h.GetRootNode())]
+
+
+def space_look(source, view=None):
+    """One-call space look for a GIZMO reader: starlight image if there are star particles,
+    else a column-density x temperature composite; glowing stars for STARFORGE sinks."""
+    view = space_view(view)
+    names = block_names(source)
+    pvs.Hide(source, view)
+    made = {}
+    if "Stars" in names:
+        made["starlight"] = add_starlight(source, view)
+    elif "Gas" in names:
+        made["composite"] = add_composite(source, view)
+    if "Type5" in names:
+        ref = 0.0
+        for img in made.values():  # size the stars relative to the image they overlay
+            img.UpdatePipeline()
+            ref = img.FieldData["WindowSize"].GetRange()[0]
+        made["stars"] = show_stars(source, block="Type5", view=view, ReferenceSize=ref)[0]
+    pvs.Render(view)
+    return made

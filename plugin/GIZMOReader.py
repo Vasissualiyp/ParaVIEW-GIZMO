@@ -23,9 +23,11 @@ from pvgizmo import io, vtkconv  # noqa: E402  (pvgizmo import fixes multiproces
 
 # Arrays enabled by default; everything else starts unchecked (big snapshots).
 DEFAULT_ARRAYS = {"Masses", "Density", "SmoothingLength", "Velocities", "InternalEnergy",
-                  "Temperature", "MagneticField"}
+                  "Temperature", "MagneticField",
+                  # starlight (GIZMO Starlight Image / Star Properties): ages, metals (dust), sink L
+                  "StellarFormationTime", "Metallicity", "StarLuminosity_Solar"}
 RECENTER_NONE, RECENTER_PEAK, RECENTER_CUSTOM = 0, 1, 2
-HEADER_FIELDS = ("Time", "Redshift", "HubbleParam", "BoxSize", "Omega_Matter", "Omega_Lambda",
+HEADER_FIELDS = ("Time", "Redshift", "HubbleParam", "BoxSize", "Omega_Matter", "Omega_Lambda", "Omega0", "OmegaLambda",
                  "UnitLength_In_CGS", "UnitMass_In_CGS", "UnitVelocity_In_CGS")
 
 

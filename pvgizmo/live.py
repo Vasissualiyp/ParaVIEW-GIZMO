@@ -79,12 +79,13 @@ class CameraLink:
 
     # -- membership
     def add(self, filt):
-        self.filters[filt] = int(filt.Resolution[0] if hasattr(filt.Resolution, "__len__") else filt.Resolution)
+        res = filt.Resolution if filt.GetProperty("Resolution") is not None else 0
+        self.filters[filt] = int(res[0] if hasattr(res, "__len__") else res)
         self.apply(interactive=False)
 
     def remove(self, filt):
         res = self.filters.pop(filt, None)
-        if res is not None and self._alive(filt):
+        if res and self._alive(filt):
             filt.Resolution = res
 
     def close(self):
@@ -142,6 +143,9 @@ class CameraLink:
                 if not self._alive(f):
                     self.filters.pop(f, None)
                     continue
+                if not full:  # no image of its own (Star Properties): only the view's scale
+                    f.ReferenceSize = float(size)
+                    continue
                 res = min(full, self.interactive_resolution) if interactive else full
                 f.AutoWindow = 0
                 f.Center = list(center)
@@ -149,7 +153,7 @@ class CameraLink:
                 f.ViewUp = list(up)
                 f.Size = float(size)
                 f.Resolution = res
-            debug_log("aim", normal=normal, size=size, res=res if self.filters else None,
+            debug_log("aim", normal=normal, size=size, res=max(self.filters.values(), default=None),
                       interactive=interactive)
         finally:
             self._busy = False
@@ -204,7 +208,7 @@ def _link_new_filters(*args):
     pvs = _pvs()
     for (name, _), src in list(pvs.GetSources().items()):
         try:
-            if src.GetXMLName() in ("MeshoidProjection", "MeshoidSlice") and int(src.FollowCamera) \
+            if src.GetProperty("FollowCamera") is not None and int(src.FollowCamera) \
                     and not following(src):
                 follow_camera(src, _active_render_view())
         except Exception:

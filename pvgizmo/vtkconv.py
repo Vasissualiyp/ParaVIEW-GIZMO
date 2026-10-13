@@ -95,8 +95,16 @@ def structured_grid_from_array(values, points, name="values"):
     pts = vtkPoints()
     pts.SetData(to_vtk_array(np.asarray(points, dtype=np.float64).transpose(1, 0, 2).reshape(-1, 3), "Points"))
     sg.SetPoints(pts)
-    flat = v.reshape(nx, ny, ncomp).transpose(1, 0, 2).reshape(-1, ncomp)  # VTK: i fastest
-    sg.GetPointData().AddArray(to_vtk_array(flat[:, 0] if ncomp == 1 else flat, name))
+    add_map_array(sg, v, name)
     sg.GetPointData().SetActiveScalars(name)
     return sg
+
+
+def add_map_array(sg, values, name):
+    """Add a (nx, ny[, k]) map, indexed [i, j], as a point array of a 2D structured grid."""
+    v = np.asarray(values)
+    nx, ny = v.shape[:2]
+    ncomp = int(np.prod(v.shape[2:])) if v.ndim > 2 else 1
+    flat = v.reshape(nx, ny, ncomp).transpose(1, 0, 2).reshape(-1, ncomp)  # VTK: i fastest
+    sg.GetPointData().AddArray(to_vtk_array(np.ascontiguousarray(flat[:, 0] if ncomp == 1 else flat), name))
 

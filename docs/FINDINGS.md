@@ -285,3 +285,110 @@ Important limits:
   slices and gradients) is future work. One process already uses every core
   via numba threads.
 
+
+## Phase 6 findings (2026-10-12): space look
+- **Sources.** Two reference pipelines, both read locally:
+  - vizmo (`vizmo/shaders/composite.wgsl`, `star_realistic.wgsl`): HSV
+    composite, PSF stars.
+  - pfh_python on the trillium home mirror
+    (`~/research/trillium/home/PYTHON/pfh_python`): `colors_sps/colors_table.py`,
+    `visualization/raytrace_projection.py` + `c_libraries/RayTrace_RGB/main.c`,
+    `make_threeband_image.py`, `attenuation/cross_section.py`. This is the
+    FIRE "mock Hubble" look.
+- **SSP table.** pfh_python's `colors.chabrier.hdf5` (BC03, Chabrier IMF; 14
+  bands × 220 ages × 6 metallicities, log L/M in L_sun *of each band*) is
+  converted to `pvgizmo/data/ssp_chabrier.npz` (64 KB, bands Bol, ugriz,
+  UBVRI, JHK). Lookup is bilinear in (log age, log Z), the same as
+  `colors_table`'s `map_coordinates(order=1)` (test). Two departures from
+  pfh_python:
+  - Its `stellar_raytrace` uses the nearest node (`CRUDE=1`); we interpolate,
+    which is smoother in movies.
+  - Its Z extrapolation column is buggy (it is missing the `+ lb2` term), so
+    we clamp Z to the table instead.
+
+  The kept pfh conventions: base age 3e-4 Gyr, base Z 2e-8, L/M ≤ 300.
+- **Dust.** `opacity_per_solar_metallicity` gives κ (cm²/g of gas at Z_sun:
+  Pei SMC-like, albedo 0.6, R_V 5.5); the evaluated values are tabulated in
+  `stars.BANDS`, e.g. u 90.4, g 65.8, r 45.6. The extinguishing mass is
+  m_gas Z/Z_sun. pfh_python also scales the three κ by (1, 0.75, 0.5) (blue
+  to red), and we keep that.
+- **Ray trace = pfh's raytrace_rgb.** Particles are visited back to front;
+  each one first dims the pixels under its kernel by exp(−κ_b m W), then adds
+  L_b W. W is the Gaussian fit to the projected quintic spline, out to 1.4 h,
+  with h clipped to [½, 100] pixel diagonals. Our numba port was compared with
+  **PFH's C code compiled from the mirror**, on 23k random particles (stars +
+  gas, 40–70% absorbed). The column map agrees to 1.1e-6 and the three band
+  images to 2–6e-6, which is float32 precision (the C code is float32).
+  - **pfh bug:** the C loop never writes the last pixel row and column
+    (`imax ≤ N−1`, `i < imax`).
+  - **Our differences:** we use the node grid; threads sweep contiguous depth
+    slabs and composite back to front (exact, since absorption is
+    multiplicative); and elements with κΣ < 1e-3 use a 2nd-order Taylor
+    expansion instead of exp (2× faster, error < 2e-10).
+  - **Sort:** above 200k culled particles, depth order comes from an O(N)
+    counting sort over 2²⁰ bins. Ties within a bin (10⁻⁶ of the depth range)
+    keep index order. It matches the exact sort in the tests.
+- **Image scaling = make_threeband_image (NASA).** The brightness level is
+  that of the brightest `Saturation`-fraction pixel of r+g+b (pfh default
+  1e-4), and the floor is that level / DynamicRange (1e4). Each channel is
+  log-scaled between the two, rescaled so that 1e-4 of the values saturate,
+  then mapped to [2, 255]. The transcribed pfh code is the test reference.
+- **Star kernels (pfh image_maker):** h = 3 × the star–star kernel radius
+  (meshoid, des_ngb 32), softly capped as 1/(1/h + 1/(0.01 × window)). With
+  fewer than 64 stars, only the cap applies.
+- **Individual stars** (STARFORGE sinks, `StarLuminosity_Solar`; ZAMS L(M)
+  otherwise): T_eff comes from L and R = M^0.8, and band L = L_bol × the
+  blackbody band fraction relative to the Sun's. Solar stars are therefore
+  white, O/B stars blue and M dwarfs orange, consistent with the SSP's
+  "L_sun in band" units.
+- **Glowing stars in ParaView** (`pvhelpers.show_stars`):
+  - Point Gaussian with `ShaderPreset="Custom"`: core, halo and spikes in
+    `CustomShader`, which edits `diffuseColor` and `opacity` after
+    `//VTK::Color::Impl`. `Emissive=1` blends additively, verified in the GUI
+    screenshot.
+  - **Opaque maps hide stars behind the focal plane.** Images are planes
+    through the focal point. Fix: `gl_FragDepth = 1e-3 * gl_FragCoord.z` in
+    the shader puts every star in front while keeping their mutual order. The
+    GUI test checks for bright cores at the projected star positions, both on
+    black and over the gas.
+  - **World-size splats grow on screen when you zoom.** On m12f the 41 sinks
+    span 1.3e-5 kpc in a 5e-4 kpc gas window, so sized relative to
+    themselves they were sub-pixel; zoomed in, they merged into one blob.
+    Fix: Star Properties has `ReferenceSize` and FollowCamera. The camera
+    link sets ReferenceSize to the visible width, so stars keep their
+    on-screen size, like a PSF. `CameraLink` handles filters without a
+    `Resolution` this way.
+- **Composite** (vizmo): the colour map at t(field 2) is converted to HSV and
+  its value is multiplied by t(field 1). It matches a `colorsys`
+  transcription of the shader. Both maps come from one shared channel cache
+  (`pvbase.project_field`), so a camera move costs two `project2d` calls.
+  - ParaView's array domain falls back to the *first* array (Density) when
+    the default (Temperature) is missing. `pvhelpers.add_composite` therefore
+    picks Temperature, else InternalEnergy.
+- **Plugin API:**
+  - Only one property per method: a second `smproperty.xml` on the same
+    method raises. The composite's Field2 hangs off a stub method whose XML
+    command is still `SetInputArrayToProcess` (index 1).
+  - `paraview.simple` names come from the *label*, hence "GIZMO Starlight
+    Image" → `pvs.GIZMOStarlightImage`.
+  - `vtkSMTransferFunctionPresets.ImportPresets` persists into the user's
+    ParaView settings, so `looks.register_presets` is idempotent and the test
+    runs it in an isolated `XDG_CONFIG_HOME`.
+- **Reader defaults** now include StellarFormationTime, Metallicity and
+  StarLuminosity_Solar (the starlight inputs). Metallicity is 11–14 floats per
+  particle, about 0.9 GB for 16M gas: untick it for huge gas-only work.
+- **Speed** (20 cores, synthetic):
+  - Composite: 0.06 s per 128² camera move at 1M gas, 1.0 s at 512².
+  - Starlight: 0.10 s at 128² for 1.2M particles (raw ray trace), 0.39 s for
+    5M. The filter on 1M gas used as both stars and absorbers (2M entries,
+    3× star kernels) takes 0.40 s at 128² and 4.75 s at 512². The cost goes
+    with kernel area: 1.4 h search radius and 3× star kernels, as in
+    pfh_python.
+- **Real data** (m12f `output_cutout/snapshot_259`: 510k gas, 41 sinks with
+  StarLuminosity_Solar, read in 9 s over sshfs):
+  - The space look (composite plus glowing sinks) renders.
+  - Zooming 8× re-projects the gas onto a 7e-5 kpc window around the
+    protostellar cluster, in 0.3 s, and the sinks resolve into separate stars.
+  - No small FIRE snapshot with star particles is available. The only z=0 one
+    in COPY (2025-07 `snapdir_590`) is 7.6 GB, so the population path is
+    validated on synthetic data plus the pfh C/table comparisons.

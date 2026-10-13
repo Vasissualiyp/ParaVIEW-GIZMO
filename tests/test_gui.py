@@ -111,3 +111,54 @@ def test_live_mouse_drag(snapdir, tmp_path, session):
     n0 = np.array(next(e for e in ev if e["event"] == "exec")["normal"])
     n1 = np.array(after[-1]["normal"])
     assert np.dot(n0, n1) < 0.9, (n0, n1)  # the view really rotated the projection
+
+
+def png_rgb(png):
+    """(rows, cols, 3) uint8, row 0 at the bottom (VTK/display convention)."""
+    from vtkmodules.util import numpy_support as ns
+    from vtkmodules.vtkIOImage import vtkPNGReader
+    r = vtkPNGReader()
+    r.SetFileName(png)
+    r.Update()
+    img = r.GetOutput()
+    nx, ny, _ = img.GetDimensions()
+    return ns.vtk_to_numpy(img.GetPointData().GetScalars()).reshape(ny, nx, -1)[..., :3]
+
+
+@pytest.mark.skipif(not (shutil.which("xvfb-run") and shutil.which("paraview")),
+                    reason="needs xvfb-run and paraview (nix develop)")
+def test_gui_space_look(snapdir, tmp_path):
+    """Phase 6 in the Qt GUI: space look on a galaxy (starlight image following the camera)
+    and on sinks (glowing gas + glowing stars drawn over it)."""
+    import json
+    shot = str(tmp_path / "space.png")
+    cfg = tmp_path / "config"
+    (cfg / "ParaView").mkdir(parents=True)
+    (cfg / "ParaView" / "ParaView.ini").write_text("[General]\nGeneralSettings.ShowWelcomeDialog=false\n")
+    env = dict(os.environ, SNAPDIR=snapdir, SHOT=shot, XDG_CONFIG_HOME=str(cfg))
+    p = subprocess.Popen(["xvfb-run", "-a", "-s", "-screen 0 1280x1024x24", "paraview",
+                          f"--script={HERE}/gui_space.py", "--exit"], env=env, text=True,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        log, _ = p.communicate(timeout=240)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        log, _ = p.communicate()
+        pytest.fail("ParaView GUI hung:\n" + log[-3000:])
+    assert "GUI_SPACE_OK" in log and "Traceback" not in log, log[-3000:]
+    for tag in ("faceon", "edgeon", "sinks", "overlay"):
+        assert n_colors(shot.replace(".png", f"_{tag}.png")) > 50, tag
+    stars_png = png_rgb(shot.replace(".png", "_stars.png")).astype(int)
+    assert np.median(stars_png) < 10  # black sky
+    px = json.load(open(shot.replace(".png", "_stars.json")))["pixels"]
+    ny, nx, _ = stars_png.shape
+    inside = [(int(round(x)), int(round(y))) for x, y in px if 3 <= x < nx - 3 and 3 <= y < ny - 3]
+    assert len(inside) > 20
+    for name in ("_stars.png", "_overlay.png"):
+        img = png_rgb(shot.replace(".png", name)).astype(int)
+        lit = [img[y - 2:y + 3, x - 2:x + 3].max() > 200 for x, y in inside]
+        assert np.mean(lit) > 0.8, (name, np.mean(lit))  # a bright core at every star, also over the gas
+    if os.environ.get("PV_GIZMO_KEEP_SHOT"):
+        for tag in ("faceon", "edgeon", "sinks", "stars", "overlay"):
+            shutil.copy(shot.replace(".png", f"_{tag}.png"),
+                        os.environ["PV_GIZMO_KEEP_SHOT"].replace(".png", f"_{tag}.png"))

@@ -22,15 +22,24 @@ pvgizmo/             pure-Python core, no ParaView dependency except vtkconv (VT
                      float32 in place) and deposit3d (3D, correct for box-crossing kernels)
 bench/bench.py       Phase 4 benchmark (synthetic 1M-16M snapshots)
   pvhelpers.py       client-side: open_snapshot, show_particles, add_projection,
-                     project_along_camera, show_map (needs paraview.simple)
+                     project_along_camera, show_map; space look: space_view, show_rgb,
+                     show_stars (glowing Point Gaussian), add_starlight, add_composite,
+                     space_look (needs paraview.simple)
   live.py            client-side camera links: maps follow the view (rotate/zoom/pan), low-res
                      while dragging; auto-installed in the GUI for FollowCamera=1
+  pvbase.py          shared filter plumbing (block lookup, caches, 2D image base class,
+                     common properties, project_field); imported by every plugin file
+  stars.py           starlight: SSP table (data/ssp_chabrier.npz), ages, dust opacities,
+                     pfh-style emission/absorption ray trace, three-band RGB scaling
+  looks.py           vizmo HSV composite, matplotlib colour maps, ParaView preset import
 plugin/              ParaView Python plugins (auto-loaded via PV_PLUGIN_PATH in the shell)
   GIZMOReader.py     "GIZMO Snapshot Reader" -> vtkPartitionedDataSetCollection
   MeshoidFilters.py  Filters > GIZMO: "Meshoid Projection", "Meshoid Slice" (2D vtkImageData),
                      "Meshoid Grid" (3D vtkImageData), "Meshoid Derived Fields" (particles)
+  SpaceLook.py       Filters > GIZMO: "GIZMO Starlight Image", "Meshoid Composite" (2D RGB maps,
+                     follow the camera), "GIZMO Star Properties" (per-star L, colour, size)
 macros/              ParaView macros (Macros > Import new macro): ProjectAlongCamera,
-                     ToggleFollowCamera, GIZMOQuickLook
+                     ToggleFollowCamera, GIZMOQuickLook, SpaceLook
 tests/               pytest; snapgen.py writes synthetic GIZMO snapshots
 meshoid/             git-ignored local clone (pinned; recreated by the shellHook)
 ```
@@ -79,6 +88,14 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
 - `test_gui.py` runs the real Qt client under `xvfb-run`
   (`tests/gui_smoke.py`). It takes about 10 s. Set `PV_GIZMO_KEEP_SHOT=x.png`
   to keep the screenshot.
+- Space look: `test_stars.py` covers the core. It checks the SSP lookup
+  against pfh's interpolation, the ray trace against a literal raytrace_rgb
+  transcription (exact screen-slab attenuation, threads, counting sort), RGB
+  scaling against transcribed make_threeband_image, and the composite
+  against the vizmo shader. `test_space_pv.py` covers the filters,
+  extinction reddening, the camera link and presets.
+  `test_gui.py::test_gui_space_look` (`tests/gui_space.py`) checks for
+  glowing stars at their projected pixels, on black and over gas.
 - `test_realdata.py` is opt-in and runs on real snapshots:
   ```sh
   D=~/research/trillium/scratch/COPY/2026-03/m12f_cutout
@@ -179,6 +196,18 @@ nix develop -c pvpython -m pytest -q tests -p no:cacheprovider
   never overridden.
 - `Delete(proxy)` leaves a usable-looking Python object behind. Check
   liveness with `ProxyManager().SMProxyManager.IsProxyInGroup(p.SMProxy, "sources")`.
+- One property per decorated method: stacking two `smproperty.xml` raises.
+  A second input-array property (`Field2`) goes on a stub method whose XML
+  command is `SetInputArrayToProcess`.
+- RGB maps: colour by the uchar `RGB` array with `MapScalars = 0` (and
+  `Ambient 1, Diffuse 0`, so the image is unlit). Opaque map planes sit at
+  the focal point and hide things behind them. Glowing stars draw on top via
+  `gl_FragDepth` in their custom shader (`pvhelpers.STAR_ON_TOP`).
+- `vtkSMTransferFunctionPresets.ImportPresets` writes into the user's
+  ParaView settings. Keep imports idempotent (`HasPreset`), and isolate
+  `XDG_CONFIG_HOME` in tests.
+- Filters linked by `pvgizmo.live` need FollowCamera. Ones without a
+  `Resolution` (Star Properties) only get `ReferenceSize` = the visible width.
 - `Xvfb` itself is not on PATH, only `xvfb-run`. Run multi-process GUI tests
   inside one `xvfb-run` (see `tests/gui_drag.sh`).
 - Point Gaussian properties in 6.0: `SetScaleArray`, `ScaleByArray`,
