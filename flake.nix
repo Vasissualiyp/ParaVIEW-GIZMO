@@ -103,6 +103,10 @@
             if [ -d "$PWD/plugin" ]; then
               export PV_PLUGIN_PATH=$PWD/plugin''${PV_PLUGIN_PATH:+:$PV_PLUGIN_PATH}
             fi
+            # Some desktop sessions (e.g. Hyprland setups) export QT_XCB_GL_INTEGRATION=none.
+            # ParaView runs on xcb and its main window needs GL, so it then never gets
+            # mapped: only the Welcome dialog appears and closing it leaves nothing.
+            unset QT_XCB_GL_INTEGRATION
             export NUMBA_CACHE_DIR=''${XDG_CACHE_HOME:-$HOME/.cache}/numba
             echo "ParaView $(pvpython --version 2>/dev/null | tail -1) | meshoid dev shell"
           '';

@@ -55,6 +55,13 @@ meshoid's dependencies, a C++ plugin toolchain (cmake, ninja, gcc, gdb) and HDF5
   exports `PV_GIZMO_PYTHON`, and every plugin calls
   `multiprocessing.set_executable(os.environ["PV_GIZMO_PYTHON"])` before it
   imports numba or meshoid. With that, the warning goes away.
+- **`QT_XCB_GL_INTEGRATION=none` hides the main window.** ParaView forces
+  the xcb platform even under Wayland, and its main window needs GL. If the
+  desktop session exports `QT_XCB_GL_INTEGRATION=none` (seen on Hyprland),
+  the main X11 window is created but never mapped: only the Welcome dialog
+  shows, and closing it leaves nothing on screen while the process idles
+  (native Wayland, `QT_QPA_PLATFORM=wayland`, fails the same way). **Fix
+  (verified on Hyprland 0.56):** the shellHook unsets the variable.
 - **GUI scripts and the Welcome dialog.** ParaView 6 opens a modal Welcome
   dialog on a timer. It appears in the first event-loop spin of a
   `--script` run and blocks forever under Xvfb. Calls that spin the loop
