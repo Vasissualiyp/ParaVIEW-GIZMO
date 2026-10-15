@@ -20,7 +20,7 @@ if ! ssh -O check "$HOST" 2>/dev/null; then
     ssh "$HOST" true   # ControlMaster auto + ControlPersist (~/.ssh/config) keep it open
 fi
 
-read -r NODE PORT JOB < <(ssh "$HOST" cat "$PV_DIR/pvserver_node.txt" 2>/dev/null || true)
+read -r NODE PORT JOB < <(ssh "$HOST" cat "$PV_DIR/pvserver_node.txt" 2>/dev/null) || true
 if [ -n "${JOB:-}" ] && ssh "$HOST" squeue -h -j "$JOB" -o %T 2>/dev/null | grep -q RUNNING; then
     echo "Reusing running pvserver job $JOB on $NODE"
 else
@@ -28,7 +28,7 @@ else
     JOB=$(ssh "$HOST" sbatch --parsable "$@" "$PV_DIR/pvserver.sbatch")
     echo "Submitted job $JOB; waiting for it to start..."
     until ssh "$HOST" test -s "$PV_DIR/pvserver_node.txt"; do
-        state=$(ssh "$HOST" squeue -h -j "$JOB" -o "%T %r" 2>/dev/null || true)
+        state=$(ssh "$HOST" "squeue -h -j $JOB -o '%T %r'" 2>/dev/null || true)  # ssh drops quoting
         [ -z "$state" ] && { echo "Job $JOB is gone; see $PV_DIR/logs/pvserver-$JOB.out" >&2; exit 1; }
         echo "  $state"
         sleep 10

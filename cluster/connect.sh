@@ -19,7 +19,7 @@ if ! ssh -O check "$HOST" 2>/dev/null; then
     exit 1
 fi
 
-read -r NODE RPORT JOB < <(ssh "$HOST" cat "$PV_DIR/pvserver_node.txt" 2>/dev/null || true)
+read -r NODE RPORT JOB < <(ssh "$HOST" cat "$PV_DIR/pvserver_node.txt" 2>/dev/null) || true
 if [ -z "${NODE:-}" ]; then
     echo "No pvserver running ($PV_DIR/pvserver_node.txt missing): submit cluster/pvserver.sbatch." >&2
     exit 1

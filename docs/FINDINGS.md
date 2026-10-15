@@ -437,3 +437,20 @@ Important limits:
 - Resolution 96 keeps the grid (three float arrays) under ParaView's 20 MB
   remote-render threshold, so in client-server mode it's delivered and
   volume-rendered on the local GPU, not with Mesa on the cluster node.
+
+- **GUI freeze (fixed 2026-10-15).** `CameraLink` read the camera through
+  `view.GetActiveCamera()`. The proxy wrapper first pushes the view's camera
+  properties into the vtkCamera, which fires ModifiedEvent → `_on_camera` →
+  `GetActiveCamera()` again: endless recursion, 95% CPU, a GUI that wouldn't
+  close. Keep the vtkCamera object instead, and guard re-entry.
+- **Built-in look instead of Meshoid maps** (the user's preference: the
+  Meshoid images were too low-resolution). The GIZMOQuickLook macro makes one
+  Point Gaussian item per particle type (own eye each). Gas is sized by its
+  smoothing length, coloured by the reader's new `log10_Density`, and made
+  opaque by it through Point Gaussian's OpacityByArray. That's an ordinary
+  transfer function, editable in the Properties panel. The splats are drawn at
+  screen resolution. Built-in volume alternatives are SPH Volume/Plane
+  Interpolator.
+- **pvgizmo.live's auto-follow hook** was installed once per process, at plugin
+  load, which in client-server mode is the GUI's startup builtin session. It's
+  now installed per session.

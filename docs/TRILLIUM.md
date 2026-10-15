@@ -20,21 +20,24 @@ What's verified, and what isn't:
 
 ## Quick start (the scripted route)
 
-Scripts live in `cluster/`, with copies in `/scratch/vasissua/ParaVIEW/` on the
-cluster. Commands go to the cluster through that directory's `scripts.txt`,
-which a `queue_runner.sh` on the login node executes.
+On the workstation, from the repo root:
 
 ```sh
-# 1. Submit the server (login node; or append the line to scripts.txt)
-sbatch /scratch/vasissua/ParaVIEW/pvserver.sbatch     # writes pvserver_node.txt
-# 2. On the workstation: log in once (MFA), then tunnel + GUI
-ssh trillium                                          # leave it open (ControlPersist)
-cluster/connect.sh                                    # or --tunnel-only, then:
-nix develop -c pvpython cluster/check_remote.py       # headless end-to-end check
+cluster/start.sh                          # debug partition, 1 h
+cluster/start.sh -p compute -t 4:00:00    # longer: any sbatch options
 ```
 
+It logs in if needed (MFA once; the ssh ControlPersist keeps the connection
+for 6 h), reuses a running pvserver job or submits `pvserver.sbatch`, waits
+until the server accepts connections, tunnels, and starts the GUI. If you close
+the GUI, rerun `cluster/start.sh` (or `cluster/connect.sh`) to reconnect to the
+same job. The debug partition allows one job per user.
+
+`nix develop -c pvpython cluster/check_remote.py` (after
+`cluster/connect.sh --tunnel-only`) is a headless end-to-end check.
 The job restarts pvserver after each disconnect, so you can reconnect until the
-time limit (1 h on debug; use `sbatch -p compute -t 4:00:00 ...` for more).
+time limit. Rebuild and re-upload the image (section 1) after changing
+`pvgizmo/` or `plugin/`.
 Sections 1–3 below describe the manual steps.
 
 ## 1. Build the server image (on your machine)
