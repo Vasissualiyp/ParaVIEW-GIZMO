@@ -10,9 +10,32 @@ What's verified, and what isn't:
   connect to it. Server-side and client-side rendering both work, rotated maps
   keep their orientation, camera-following works, and `mpiexec -n 3 pvserver`
   gives the single-process results (`tests/test_client_server.py`).
-- **Not verified on Trillium itself:** module names, partitions and node
-  hostnames below are placeholders. Check them with `module spider apptainer`
-  and the SciNet docs.
+- **Verified on Trillium (2026-10-15):** `cluster/pvserver.sbatch` (debug
+  partition, rrg-rbond-ac, one whole node) ran the image on `tri0003`.
+  Apptainer is in `/usr/bin`, so no module is needed. The tunnel from a workstation
+  through the login node reached it, and `cluster/check_remote.py` passed on m12f
+  `output_cutout/snapshot_259` (73,825 gas, 23 sinks): 512² projection 1.0 s
+  per rotation, space look 2.2 s, a 4× zoom 0.75 s, all including delivery to the
+  client. The GUI connected the same way.
+
+## Quick start (the scripted route)
+
+Scripts live in `cluster/`, with copies in `/scratch/vasissua/ParaVIEW/` on the
+cluster. Commands go to the cluster through that directory's `scripts.txt`,
+which a `queue_runner.sh` on the login node executes.
+
+```sh
+# 1. Submit the server (login node; or append the line to scripts.txt)
+sbatch /scratch/vasissua/ParaVIEW/pvserver.sbatch     # writes pvserver_node.txt
+# 2. On the workstation: log in once (MFA), then tunnel + GUI
+ssh trillium                                          # leave it open (ControlPersist)
+cluster/connect.sh                                    # or --tunnel-only, then:
+nix develop -c pvpython cluster/check_remote.py       # headless end-to-end check
+```
+
+The job restarts pvserver after each disconnect, so you can reconnect until the
+time limit (1 h on debug; use `sbatch -p compute -t 4:00:00 ...` for more).
+Sections 1–3 below describe the manual steps.
 
 ## 1. Build the server image (on your machine)
 

@@ -391,8 +391,9 @@ Important limits:
     3× star kernels) takes 0.40 s at 128² and 4.75 s at 512². The cost goes
     with kernel area: 1.4 h search radius and 3× star kernels, as in
     pfh_python.
-- **Real data** (m12f `output_cutout/snapshot_259`: 510k gas, 41 sinks with
-  StarLuminosity_Solar, read in 9 s over sshfs):
+- **Real data** (an m12f snapshot recorded as `output_cutout/snapshot_259`, 510k gas,
+  41 sinks with StarLuminosity_Solar, read in 9 s over sshfs; the counts don't match
+  that file, which has 73,825 gas and 23 sinks, so the file actually used is unclear):
   - The space look (composite plus glowing sinks) renders.
   - Zooming 8× re-projects the gas onto a 7e-5 kpc window around the
     protostellar cluster, in 0.3 s, and the sinks resolve into separate stars.
