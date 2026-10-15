@@ -4,7 +4,8 @@
     nix develop -c pvpython cluster/check_remote.py [SNAPSHOT] [--port 11111] [--out DIR]
 
 The snapshot path is on the cluster (the server opens it). Opens it, projects the gas
-column density and builds the space look, timing each step, and saves screenshots.
+column density, builds the space look, then centres on the most massive star and zooms
+through a dense-gas volume, timing each step, and saves screenshots.
 Prints REMOTE_OK on success.
 """
 
@@ -65,4 +66,17 @@ view.GetActiveCamera().Zoom(4.0)
 pvs.Render(view)
 step("zoomed 4x: re-projected")
 pvs.SaveScreenshot(os.path.join(a.out, "remote_space_zoom.png"), view, ImageResolution=[800, 800])
+for f in made.values():
+    live.unfollow(f)
+    pvs.Hide(f, view)
+
+pvhelpers.center_on_star(r)
+step(f"recentred on star {r.FieldData['CenterParticleID'].GetRange()[0]:.0f}")
+pvhelpers.star_camera(view, size=1e-2)
+g = pvhelpers.add_dense_volume(r, view)
+step("dense-gas volume (96^3, delivered and rendered on the client)")
+for k in range(3):
+    pvhelpers.zoom(10.0, view)
+    step(f"zoomed to {live.view_window(view)[3]:.1e}: re-gridded, grid size {g.Size:.1e}")
+pvs.SaveScreenshot(os.path.join(a.out, "remote_dense.png"), view, ImageResolution=[800, 800])
 print("REMOTE_OK", flush=True)
