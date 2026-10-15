@@ -256,6 +256,23 @@ def safe_log10(values):
     return np.log10(np.where(v > 0, v, floor))
 
 
+def scaled_log10(values, decades=4.0, top_percentile=99.9, levels=None):
+    """log10(values) mapped to [0, 1]: 1 at the top_percentile of the positive values,
+    0 at `decades` below it (and for empty voxels). levels=(lo, hi): fixed log10 levels
+    instead (0 at lo, 1 at hi). Float32."""
+    v = np.asarray(values, dtype=np.float64)
+    pos = v[v > 0]
+    if levels is not None:
+        top, decades = float(levels[1]), float(levels[1]) - float(levels[0])
+    elif pos.size == 0:
+        return np.zeros(v.shape, np.float32)
+    else:
+        top = np.log10(np.percentile(pos, top_percentile))
+    with np.errstate(divide="ignore"):
+        lg = np.where(v > 0, np.log10(np.where(v > 0, v, 1.0)), -np.inf)
+    return np.clip((lg - (top - decades)) / decades, 0.0, 1.0).astype(np.float32)
+
+
 def grid3d_interp(meshoid, field, center, size, res, order=0, slope_limiter=False):
     """Intensive `field` reconstructed at the res^3 nodes; (res,res,res[,k])."""
     f = np.asarray(field, dtype=np.float64)

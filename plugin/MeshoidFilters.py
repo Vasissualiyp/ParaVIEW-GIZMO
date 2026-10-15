@@ -183,11 +183,40 @@ class MeshoidGrid(_MeshoidImageFilter):
         self._order = 0
         self._limiter = False
         self._log10 = True
+        self._decades = 4.0
+        self._scale_range = (0.0, 0.0)
+        self._follow = False
+
+    @smproperty.xml(_bool_xml(
+        "FollowCamera", "SetFollowCamera", 0,
+        "GUI: keep the grid centred on the camera's focal point with the visible width as its "
+        "size, re-gridding as you zoom/pan (rotation needs no re-gridding). Overrides "
+        "Center/Size/AutoWindow."))
+    def SetFollowCamera(self, v):
+        self._follow = bool(v)  # acted on by the client (pvgizmo.live)
+
+    @smproperty.doublevector(name="DynamicRange", default_values=4.0)
+    def SetDynamicRange(self, d):
+        """Decades covered by scaled_log10_[array]."""
+        self._set("_decades", max(float(d), 1e-3))
+
+    @smproperty.xml("""
+<DoubleVectorProperty name="ScaleRange" command="SetScaleRange" number_of_elements="2" default_values="0 0">
+  <Documentation>Fixed log10 levels for scaled_log10_[array]: 0 at the first, 1 at the second
+  (e.g. log10 density in code units). Same opacity for the same density in every frame and at
+  every zoom: use it for movies. 0 0 = automatic (DynamicRange decades below the densest voxels
+  of the current window).</Documentation>
+</DoubleVectorProperty>""")
+    def SetScaleRange(self, lo, hi):
+        self._set("_scale_range", (float(lo), float(hi)))
 
     @smproperty.xml(_bool_xml(
         "AddLog10", "SetAddLog10", 1,
-        "Also output log10_[array] (empty voxels set one decade below the smallest positive value). "
-        "Use it for volume rendering and contours: ParaView's volume mapper ignores log-scaled colour maps."))
+        "Also output log10_[array] (empty voxels set one decade below the smallest positive value) and "
+        "scaled_log10_[array]: 0 at DynamicRange decades below the densest voxels (99.9th percentile), "
+        "1 at them. Use log10 for contours and scaled_log10 for volume rendering: its fixed 0-1 range "
+        "keeps one opacity curve valid at every zoom and timestep. (ParaView's volume mapper ignores "
+        "log-scaled colour maps.)"))
     def SetAddLog10(self, v):
         self._set("_log10", bool(v))
 
@@ -217,6 +246,10 @@ class MeshoidGrid(_MeshoidImageFilter):
     def SetSlopeLimiter(self, v):
         self._set("_limiter", bool(v))
 
+    def _levels(self):
+        lo, hi = self._scale_range
+        return (lo, hi) if hi > lo else None
+
     def RequestInformation(self, request, inInfoVec, outInfoVec):
         info = outInfoVec.GetInformationObject(0)
         r = self._res - 1
@@ -244,8 +277,10 @@ class MeshoidGrid(_MeshoidImageFilter):
         origin, spacing = mo.grid3d_geometry(center, size, self._res)
         img = vtkconv.image_from_array(vals, origin, spacing, name=label)
         if self._log10 and vals.ndim == 3:
+            lg = mo.safe_log10(vals)
+            img.GetPointData().AddArray(vtkconv.to_vtk_array(np.ravel(lg, order="F"), f"log10_{label}"))
             img.GetPointData().AddArray(vtkconv.to_vtk_array(
-                np.ravel(mo.safe_log10(vals), order="F"), f"log10_{label}"))
+                np.ravel(mo.scaled_log10(vals, self._decades, levels=self._levels()), order="F"), f"scaled_log10_{label}"))
         out = vtkImageData.GetData(outInfoVec, 0)
         out.ShallowCopy(img)
         vtkconv.add_field_data(out, {"WindowCenter": center, "WindowSize": size})

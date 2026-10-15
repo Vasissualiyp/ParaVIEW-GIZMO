@@ -122,6 +122,7 @@ def make_sinks(ngas=3000, nsink=40, seed=6):
     ms = 10 ** rng.uniform(-1, 1.5, nsink)
     sinks = dict(Coordinates=plummer(nsink, 0.5, rng).astype(np.float32), Masses=ms.astype(np.float32),
                  Velocities=np.zeros((nsink, 3), np.float32),
+                 ParticleIDs=np.arange(ngas + 1, ngas + nsink + 1, dtype=np.uint32),
                  StarLuminosity_Solar=(ms**3.5).astype(np.float32))
     return {0: gas, 5: sinks}, np.zeros(6)
 

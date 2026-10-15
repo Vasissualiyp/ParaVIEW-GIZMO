@@ -190,3 +190,36 @@ def density_peak(parts, physical=True):
         return None
     d = read_ptype(parts, 0, ["Density"], physical=physical)
     return d["Coordinates"][np.argmax(d["Density"])].astype(np.float64)
+
+
+STAR_TYPES = (5, 4)  # STARFORGE sinks first, then FIRE star particles
+
+
+def star_center(parts, physical=True, particle_id=0):
+    """(position float64, ParticleID, ptype) of the centring star, or None if there are none.
+
+    particle_id = 0: the most massive star in this snapshot (sinks before star particles).
+    Otherwise the star with that ParticleIDs value: following one star through a time
+    series avoids jumps when a different star becomes the most massive. If that star is
+    absent (not formed yet, merged), falls back to the most massive one.
+    """
+    fields = list_fields(parts)
+    best = None
+    for t in STAR_TYPES:
+        f = fields.get(t, {})
+        if "Masses" not in f:
+            continue
+        names = ["Masses"] + (["ParticleIDs"] if "ParticleIDs" in f else [])
+        d = read_ptype(parts, t, names, physical=physical)
+        if not d or len(d["Masses"]) == 0:
+            continue
+        ids = d.get("ParticleIDs")
+        if particle_id and ids is not None:
+            hit = np.flatnonzero(ids == particle_id)
+            if hit.size:
+                i = hit[0]
+                return d["Coordinates"][i].astype(np.float64), int(ids[i]), t
+        if best is None:
+            i = int(np.argmax(d["Masses"]))
+            best = (d["Coordinates"][i].astype(np.float64), int(ids[i]) if ids is not None else -1, t)
+    return best

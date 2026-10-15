@@ -26,7 +26,7 @@ DEFAULT_ARRAYS = {"Masses", "Density", "SmoothingLength", "Velocities", "Interna
                   "Temperature", "MagneticField",
                   # starlight (GIZMO Starlight Image / Star Properties): ages, metals (dust), sink L
                   "StellarFormationTime", "Metallicity", "StarLuminosity_Solar"}
-RECENTER_NONE, RECENTER_PEAK, RECENTER_CUSTOM = 0, 1, 2
+RECENTER_NONE, RECENTER_PEAK, RECENTER_CUSTOM, RECENTER_STAR = 0, 1, 2, 3
 HEADER_FIELDS = ("Time", "Redshift", "HubbleParam", "BoxSize", "Omega_Matter", "Omega_Lambda", "Omega0", "OmegaLambda",
                  "UnitLength_In_CGS", "UnitMass_In_CGS", "UnitVelocity_In_CGS")
 
@@ -67,6 +67,8 @@ class GIZMOSnapshotReader(VTKPythonAlgorithmBase):
         self._use_bbox = False
         self._recenter = RECENTER_NONE
         self._center = [0.0, 0.0, 0.0]
+        self._center_id = 0
+        self._centered_on = -1
         self._peak_cache = {}  # (first part, physical) -> density-peak position
         self._bbox = [-1.0, 1.0, -1.0, 1.0, -1.0, 1.0]
 
@@ -128,13 +130,16 @@ class GIZMOSnapshotReader(VTKPythonAlgorithmBase):
             <Entry value="0" text="None"/>
             <Entry value="1" text="Gas density peak"/>
             <Entry value="2" text="Custom center"/>
+            <Entry value="3" text="Most massive star"/>
           </EnumerationDomain>
           <Documentation>Subtract a center from all coordinates (in double precision) before
           they reach VTK. Opt-in. Rendering is float32: a zoom region far from the box origin
           can be smaller than float32 spacing there and collapses to a point without this (the
           reader warns when that happens). The
           offset is stored in the CenterOffset field array. With a time series the density
-          peak is found per snapshot.</Documentation>
+          peak / star is found per snapshot, so a movie stays centred on it. "Most massive
+          star": the most massive sink (PartType5), else star particle (PartType4), else the
+          density peak; set CenterParticleID to follow one particular star instead.</Documentation>
         </IntVectorProperty>""")
     def SetRecenter(self, v):
         if int(v) != self._recenter:
@@ -145,6 +150,19 @@ class GIZMOSnapshotReader(VTKPythonAlgorithmBase):
     def SetCenter(self, x, y, z):
         if [x, y, z] != self._center:
             self._center = [x, y, z]
+            self.Modified()
+
+    @smproperty.xml("""
+        <IdTypeVectorProperty name="CenterParticleID" command="SetCenterParticleID"
+                              number_of_elements="1" default_values="0">
+          <Documentation>Recenter = Most massive star: 0 centres on the most massive star of
+          each snapshot; a ParticleIDs value follows that star (no jumps when another one
+          becomes the most massive). The ID used is in the CenterParticleID field array.
+          </Documentation>
+        </IdTypeVectorProperty>""")
+    def SetCenterParticleID(self, v):
+        if int(v) != self._center_id:
+            self._center_id = int(v)
             self.Modified()
 
     @smproperty.xml("""
@@ -210,7 +228,17 @@ class GIZMOSnapshotReader(VTKPythonAlgorithmBase):
     def _offset(self, parts):
         if self._recenter == RECENTER_CUSTOM:
             return np.array(self._center, dtype=np.float64)
-        if self._recenter == RECENTER_PEAK:
+        if self._recenter == RECENTER_STAR:
+            key = ("star", parts[0], self._physical, self._center_id)
+            if key not in self._peak_cache:
+                self._peak_cache[key] = io.star_center(parts, physical=self._physical,
+                                                       particle_id=self._center_id)
+            hit = self._peak_cache[key]
+            if hit is not None:
+                self._centered_on = hit[1]
+                return hit[0]
+            self._centered_on = -1  # no stars yet: fall back to the gas density peak
+        if self._recenter in (RECENTER_PEAK, RECENTER_STAR):
             key = (parts[0], self._physical)
             if key not in self._peak_cache:
                 self._peak_cache[key] = io.density_peak(parts, physical=self._physical)
@@ -265,5 +293,7 @@ class GIZMOSnapshotReader(VTKPythonAlgorithmBase):
         meta["SnapshotNumber"] = io.snapshot_number(parts[0]) if io.snapshot_number(parts[0]) is not None else -1
         meta["NumPart_Total"] = hdr["NumPart_Total"]
         meta["CenterOffset"] = offset if offset is not None else np.zeros(3)
+        if self._recenter == RECENTER_STAR:
+            meta["CenterParticleID"] = self._centered_on
         vtkconv.add_field_data(out, meta)  # DATA_TIME_STEP is set by the executive
         return 1

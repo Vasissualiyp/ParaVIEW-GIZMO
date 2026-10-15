@@ -294,3 +294,92 @@ def space_look(source, view=None):
         made["stars"] = show_stars(source, block="Type5", view=view, ReferenceSize=ref)[0]
     pvs.Render(view)
     return made
+
+
+# ---------------------------------------------------------------- star-centred movies
+def center_on_star(reader, particle_id=0):
+    """Recenter the GIZMO reader on the most massive star of every snapshot (or on the
+    star with ParticleIDs == particle_id), so the star sits at the origin in each frame."""
+    reader.Recenter = "Most massive star"
+    reader.CenterParticleID = int(particle_id)
+    reader.UpdatePipeline()
+    return reader
+
+
+def star_camera(view=None, size=None, parallel=True):
+    """Aim the view at the origin (the star, with center_on_star), keeping the direction.
+
+    Focal point and centre of rotation go to the origin, so rotating orbits the star and
+    zooming closes in on it instead of on the middle of the whole box. Parallel projection
+    makes zoom a pure change of scale: no flying past the region, no near-plane clipping.
+    size: visible width (default: the current one).
+    """
+    from pvgizmo import live
+    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    _, normal, up, cur = live.view_window(view)
+    size = float(size or cur)
+    w, h = (list(view.ViewSize) + [1, 1])[:2]
+    aspect = max(1.0, w / h) if w > 0 and h > 0 else 1.0
+    height = size / aspect
+    view.CameraParallelProjection = int(bool(parallel))
+    dist = 0.5 * height / np.tan(np.radians(view.CameraViewAngle) / 2)
+    if parallel:
+        dist = max(dist, 10 * size)  # far enough that the clipping range covers the region
+    view.CameraFocalPoint = [0.0, 0.0, 0.0]
+    view.CenterOfRotation = [0.0, 0.0, 0.0]
+    view.CameraPosition = list(np.asarray(normal) * dist)
+    view.CameraViewUp = list(up)
+    view.CameraParallelScale = 0.5 * height
+    view.CenterAxesVisibility = 0
+    try:  # pvpython resets the camera on the first Render: that would undo all this
+        pvs._DisableFirstRenderCameraReset()
+    except AttributeError:
+        pass
+    pvs.Render(view)
+    return view
+
+
+def zoom(factor, view=None):
+    """Zoom in by `factor` (> 1) or out (< 1) about the focal point."""
+    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    cam = view.GetActiveCamera()
+    if view.CameraParallelProjection:
+        cam.SetParallelScale(cam.GetParallelScale() / factor)
+    else:
+        cam.Dolly(factor)
+    pvs.Render(view)
+
+
+def add_dense_volume(source, view=None, block="Gas", field="Masses", resolution=96, decades=4.0,
+                     preset="Inferno (matplotlib)", max_opacity=0.8, opacity_start=0.25, follow=True):
+    """Volume render of the gas where dense gas is opaque and diffuse gas transparent.
+
+    A Meshoid Grid of `field` density (mass density by default) that follows the camera
+    (centred on the focal point, as wide as the view: zooming re-grids the visible region),
+    rendered from scaled_log10: 0 at `decades` below the densest voxels, 1 at them. The
+    opacity is 0 up to `opacity_start` and rises to `max_opacity` at the densest gas, on
+    that fixed 0-1 scale, so it holds at every zoom and timestep. Edit the curve in the
+    Color Map Editor. resolution 96 keeps the grid under ParaView's 20 MB remote-render
+    threshold, so a remote grid is still volume-rendered on the local GPU.
+    """
+    from pvgizmo import live
+    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    g = pvs.MeshoidGrid(Input=source, Block=block, Field=["POINTS", field], Resolution=int(resolution),
+                        DynamicRange=float(decades), FollowCamera=int(bool(follow)))
+    if follow:
+        live.follow_camera(g, view)
+    g.UpdatePipeline()
+    name = next(n for n in g.PointData.keys() if n.startswith("scaled_log10_"))
+    rep = pvs.Show(g, view)
+    rep.SetRepresentationType("Volume")
+    pvs.ColorBy(rep, ("POINTS", name))
+    lut = pvs.GetColorTransferFunction(name)
+    lut.ApplyPreset(preset, True)
+    lut.AutomaticRescaleRangeMode = "Never"
+    lut.RescaleTransferFunction(0.0, 1.0)
+    otf = pvs.GetOpacityTransferFunction(name)
+    otf.Points = [0.0, 0.0, 0.5, 0.0, opacity_start, 0.0, 0.5, 0.0, 1.0, max_opacity, 0.5, 0.0]
+    otf.RescaleTransferFunction(0.0, 1.0)
+    live.set_volume_scale(rep, g)
+    pvs.Render(view)
+    return g

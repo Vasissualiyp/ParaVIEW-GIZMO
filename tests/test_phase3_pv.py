@@ -149,7 +149,8 @@ def test_grid_log10_array(reader):
     g = pvs.MeshoidGrid(Input=reader, Resolution=16)
     img = out(g)
     pdat = img.GetPointData()
-    assert pdat.GetNumberOfArrays() == 2 and pdat.GetArrayName(1) == "log10_GridDensity_Masses"
+    assert pdat.GetNumberOfArrays() == 3 and pdat.GetArrayName(1) == "log10_GridDensity_Masses"
+    assert pdat.GetArrayName(2) == "scaled_log10_GridDensity_Masses"  # 0-1 opacity scale
     lin, lg = (ns.vtk_to_numpy(pdat.GetArray(i)) for i in range(2))
     np.testing.assert_allclose(lg, mo.safe_log10(lin))
     assert np.all(np.isfinite(lg))

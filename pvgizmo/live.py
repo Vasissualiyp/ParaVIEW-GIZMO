@@ -104,6 +104,13 @@ class CameraLink:
         except Exception:
             return False
 
+    def _rep(self, filt):
+        try:
+            from paraview import servermanager as sm
+            return sm.GetRepresentation(filt, self.view)
+        except Exception:
+            return None
+
     # -- camera handling
     def _state(self):
         cam = self.view.GetActiveCamera()
@@ -146,17 +153,41 @@ class CameraLink:
                 if not full:  # no image of its own (Star Properties): only the view's scale
                     f.ReferenceSize = float(size)
                     continue
-                res = min(full, self.interactive_resolution) if interactive else full
                 f.AutoWindow = 0
+                if f.GetProperty("Normal") is None:
+                    # axis-aligned 3D grid (Meshoid Grid): only centre and zoom matter, and
+                    # it stays at full resolution. Rounded so that a pure rotation (same
+                    # values up to float noise) doesn't re-grid.
+                    s = float(f"{size:.6g}")
+                    f.Center = list(np.round(np.asarray(center) / (s * 1e-6)) * (s * 1e-6))
+                    f.Size = s
+                    set_volume_scale(self._rep(f), f)
+                    continue
                 f.Center = list(center)
+                f.Size = float(size)
                 f.Normal = list(normal)
                 f.ViewUp = list(up)
-                f.Size = float(size)
-                f.Resolution = res
+                f.Resolution = min(full, self.interactive_resolution) if interactive else full
             debug_log("aim", normal=normal, size=size, res=max(self.filters.values(), default=None),
                       interactive=interactive)
         finally:
             self._busy = False
+
+
+VOLUME_UNIT_FRACTION = 0.1
+
+
+def set_volume_scale(rep, filt):
+    """Volume opacity is per unit world length: tie that length to the grid size, so a
+    zoomed-in (re-gridded) volume looks as opaque as before instead of fading out."""
+    if rep is None or rep.GetProperty("ScalarOpacityUnitDistance") is None:
+        return
+    size = float(filt.Size) if not int(filt.AutoWindow) else None
+    if size is None:
+        b = filt.GetDataInformation().GetBounds()
+        size = max(b[1] - b[0], b[3] - b[2], b[5] - b[4])
+    if size > 0:
+        rep.ScalarOpacityUnitDistance = VOLUME_UNIT_FRACTION * size
 
 
 def _active_render_view():
