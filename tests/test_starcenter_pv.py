@@ -166,3 +166,29 @@ def test_dense_volume_follows_zoom(series):
     b = ns.vtk_to_numpy(g.GetClientSideObject().GetOutputDataObject(0).GetPointData().GetArray(name))
     assert not np.allclose(a, b) and np.median(b) == pytest.approx(1.0)
     pvs.Delete(view)
+
+
+def test_particle_look(series):
+    """Built-in Point Gaussian per particle type: own pipeline items, gas opacity by density."""
+    files, _ = series
+    r = pvs.GIZMOSnapshotReader(FileNames=files[:1])
+    r.UpdatePipeline()
+    assert "log10_Density" in r.PointData.keys()
+    view = pvs.CreateRenderView()
+    pvs.Show(r, view)  # as after Apply in the GUI
+    made = pvhelpers.particle_look(r, view)
+    assert set(made) == {"Gas", "Type5"}
+    names = {k[0] for k in pvs.GetSources()}
+    assert {"Gas", "Sinks"} <= names
+    gas = pvs.GetDisplayProperties(made["Gas"], view)
+    assert gas.Representation == "Point Gaussian" and gas.OpacityByArray == 1
+    assert gas.OpacityArray[1] == "log10_Density" and gas.SetScaleArray[1] == "SmoothingLengthVTK"
+    pts = gas.OpacityTransferFunction.Points
+    assert pts[1] == 0.0 and pts[5] == 1.0 and pts[4] > pts[0]  # transparent -> opaque with density
+    from paraview import servermanager as sm
+    assert not sm.GetRepresentation(r, view).Visibility
+    pvs.Render(view)
+    for s in made.values():
+        pvs.Delete(s)
+    pvs.Delete(view)
+    pvs.Delete(r)

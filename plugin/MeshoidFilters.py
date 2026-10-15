@@ -163,7 +163,7 @@ GRID_MODES = ("Deposit (density of a conserved field)", "Interpolate (intensive 
 
 
 @smproxy.filter(name="MeshoidGrid", label="Meshoid Grid")
-@smhint.xml('<ShowInMenu category="GIZMO"/>')
+@smhint.xml('<ShowInMenu category="GIZMO"/><RepresentationType view="RenderView" type="Volume"/>')
 @smproperty.input(name="Input", port_index=0)
 @smdomain.datatype(dataTypes=["vtkDataObject"], composite_data_supported=True)
 @_common_props(["SetBlock", "SetAutoWindow", "SetCenter", "SetSize", "SetResolution"])
@@ -188,7 +188,7 @@ class MeshoidGrid(_MeshoidImageFilter):
         self._follow = False
 
     @smproperty.xml(_bool_xml(
-        "FollowCamera", "SetFollowCamera", 0,
+        "FollowCamera", "SetFollowCamera", 1,
         "GUI: keep the grid centred on the camera's focal point with the visible width as its "
         "size, re-gridding as you zoom/pan (rotation needs no re-gridding). Overrides "
         "Center/Size/AutoWindow."))
@@ -281,6 +281,8 @@ class MeshoidGrid(_MeshoidImageFilter):
             img.GetPointData().AddArray(vtkconv.to_vtk_array(np.ravel(lg, order="F"), f"log10_{label}"))
             img.GetPointData().AddArray(vtkconv.to_vtk_array(
                 np.ravel(mo.scaled_log10(vals, self._decades, levels=self._levels()), order="F"), f"scaled_log10_{label}"))
+            # the GUI colours (and, as a volume, sets opacity) by the active scalars on Apply
+            img.GetPointData().SetActiveScalars(f"scaled_log10_{label}")
         out = vtkImageData.GetData(outInfoVec, 0)
         out.ShallowCopy(img)
         vtkconv.add_field_data(out, {"WindowCenter": center, "WindowSize": size})

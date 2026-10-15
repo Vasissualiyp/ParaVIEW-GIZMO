@@ -276,6 +276,10 @@ class GIZMOSnapshotReader(VTKPythonAlgorithmBase):
             pos = data.pop("Coordinates", np.zeros((0, 3), np.float32))
             if offset is None and piece == 0:
                 _warn_if_float32_collapses(pos, io.PTYPE_NAMES[t])
+            if "Density" in data:  # opacity/colour curves are linear: give them log density
+                d = np.asarray(data["Density"], dtype=np.float64)
+                tiny = d[d > 0].min() if np.any(d > 0) else 1.0
+                data["log10_Density"] = np.log10(np.maximum(d, tiny)).astype(np.float32)
             if "SmoothingLength" in data:  # VTK SPH kernels: support = 2h, GIZMO H = support
                 data["SmoothingLengthVTK"] = 0.5 * data["SmoothingLength"]
             pd = vtkconv.particles_to_polydata(pos, data)

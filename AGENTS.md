@@ -42,7 +42,7 @@ cluster/             Trillium client-server: pvserver.sbatch, connect.sh (tunnel
                      check_remote.py (headless end-to-end check), status.sh
 macros/              ParaView macros (Macros > Import new macro, or copy to
                      ~/.config/ParaView/Macros): ProjectAlongCamera, ToggleFollowCamera,
-                     GIZMOQuickLook, SpaceLook, CenterOnStar, DenseGasVolume, ZoomIn10x/ZoomOut10x
+                     GIZMOQuickLook, SpaceLook, CenterOnStar, ZoomIn10x/ZoomOut10x
 tests/               pytest; snapgen.py writes synthetic GIZMO snapshots
 meshoid/             git-ignored local clone (pinned; recreated by the shellHook)
 ```

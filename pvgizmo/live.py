@@ -30,7 +30,7 @@ def debug_log(event, **kw):
         kw = {k: (np.asarray(v).tolist() if isinstance(v, np.ndarray) else v) for k, v in kw.items()}
         with open(path, "a") as fh:
             fh.write(json.dumps({"event": event, **kw}) + "\n")
-_AUTO = {"installed": False}
+_AUTO = {"installed": False, "sessions": set()}
 
 
 def _pvs():
@@ -68,7 +68,10 @@ class CameraLink:
         self._busy = False
         self._interacting = False
         self._observers = []
-        cam = view.GetActiveCamera()
+        # Keep the vtkCamera: view.GetActiveCamera() (the proxy wrapper) first pushes the
+        # view's camera properties into it, which fires ModifiedEvent -> _on_camera ->
+        # GetActiveCamera() ... an endless loop that froze the GUI.
+        self._cam = cam = view.GetActiveCamera()
         self._observers.append((cam, cam.AddObserver("ModifiedEvent", self._on_camera)))
         # Mouse interaction start/end: the Qt GUI reports these on the view proxy
         # (vtkSMRenderViewProxy forwards them); a plain VTK interactor reports them itself.
@@ -113,7 +116,7 @@ class CameraLink:
 
     # -- camera handling
     def _state(self):
-        cam = self.view.GetActiveCamera()
+        cam = self._cam
         return tuple(np.round(np.r_[cam.GetPosition(), cam.GetFocalPoint(), cam.GetViewUp(),
                                     cam.GetViewAngle(), cam.GetParallelScale(), cam.GetParallelProjection(),
                                     list(self.view.ViewSize)[:2]], 12))
@@ -123,7 +126,11 @@ class CameraLink:
         # render: only react to geometric changes, and never re-enter.
         if self._busy:
             return
-        st = self._state()
+        self._busy = True
+        try:
+            st = self._state()
+        finally:
+            self._busy = False
         if st == self._last:
             return
         self.apply(interactive=self._interacting)
@@ -266,11 +273,12 @@ def in_gui():
 def enable_auto_follow():
     """Auto-link filters with FollowCamera=1 as they are created (GUI client only).
 
-    Scripts (pvpython) are left alone so explicit windows are not overridden;
-    use follow_camera() there. Safe to call repeatedly.
+    Installed per session: in client-server mode the GUI starts with a builtin session
+    and then connects, so a hook installed at plugin load would watch the wrong session.
+    Called at plugin load and again whenever a GIZMO filter is constructed. Scripts
+    (pvpython) are left alone so explicit windows are not overridden; use follow_camera()
+    there. Safe to call repeatedly.
     """
-    if _AUTO["installed"]:
-        return True
     if not in_gui():
         return False
     try:
@@ -280,8 +288,12 @@ def enable_auto_follow():
         pxm = sm.vtkSMProxyManager.GetProxyManager().GetActiveSessionProxyManager()
         if pxm is None:
             return False
+        key = pxm.GetAddressAsString("")
+        if key in _AUTO["sessions"]:
+            return True
         from vtkmodules.vtkCommonCore import vtkCommand
         pxm.AddObserver(vtkCommand.RegisterEvent, _link_new_filters)
+        _AUTO["sessions"].add(key)
         _AUTO["installed"] = True
         return True
     except Exception:

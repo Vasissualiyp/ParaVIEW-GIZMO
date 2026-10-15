@@ -2,7 +2,7 @@
 
     from pvgizmo import pvhelpers as ph
     reader = ph.open_snapshot("snapshot_100.hdf5", Recenter=1)
-    ph.show_particles(reader)                 # Point Gaussian preset, gas coloured by density
+    ph.particle_look(reader)                  # Point Gaussian per type, gas opaque where dense
     proj = ph.add_projection(reader)          # column density, log colour map
     ph.project_along_camera(proj)             # re-aim the projection at the current view
 """
@@ -48,24 +48,83 @@ def project_along_camera(filt=None, view=None, render=True):
     return filt
 
 
-def show_particles(source, block="Gas", view=None, color_by="Density", opacity=0.3):
-    """Point Gaussian splats with radius H/2 (VTK h), coloured by `color_by` on a log scale."""
+def show_particles(source, block="Gas", view=None, color_by="log10_Density", opacity_by="log10_Density",
+                   opacity_pct=(30.0, 99.9), max_opacity=1.0, preset="Inferno (matplotlib)", name=None):
+    """Built-in Point Gaussian splats of one particle type, as its own pipeline item.
+
+    Gas: radius = SmoothingLength/2 (VTK h), coloured by `color_by` and, with
+    `opacity_by`, made opaque where dense: the opacity curve rises from 0 at the
+    opacity_pct[0] percentile to max_opacity at opacity_pct[1]. Both curves are
+    ordinary ParaView transfer functions: edit them in the Properties panel / Color
+    Map Editor. Returns (extract, representation); the extract is renamed `name`
+    (default: the block name) so each type has its own eye in the Pipeline Browser.
+    """
     view = view or pvs.GetActiveViewOrCreate("RenderView")
     ext = pvs.ExtractBlock(Input=source, Selectors=[f"/Root/{block}"])
+    pvs.RenameSource(name or block, ext)
+    ext.UpdatePipeline()
     rep = pvs.Show(ext, view)
     rep.SetRepresentationType("Point Gaussian")
     rep.ShaderPreset = "Gaussian Blur"
-    rep.ScaleByArray = 1
-    rep.SetScaleArray = ["POINTS", "SmoothingLengthVTK"]
-    rep.UseScaleFunction = 0
-    rep.GaussianRadius = 1.0
-    rep.Opacity = opacity
-    if color_by:
+    arrays = ext.PointData.keys()
+    if "SmoothingLengthVTK" in arrays:
+        rep.ScaleByArray = 1
+        rep.SetScaleArray = ["POINTS", "SmoothingLengthVTK"]
+        rep.UseScaleFunction = 0
+        rep.GaussianRadius = 1.0
+    else:  # stars/DM: a fixed size, 0.2% of the extent
+        b = ext.GetDataInformation().GetBounds()
+        rep.ScaleByArray = 0
+        rep.GaussianRadius = 0.002 * max(b[1] - b[0], b[3] - b[2], b[5] - b[4], 1e-30)
+    if color_by in arrays:
         pvs.ColorBy(rep, ("POINTS", color_by))
-        pvs.GetColorTransferFunction(color_by).UseLogScale = 1
+        lut = pvs.GetColorTransferFunction(color_by)
+        lut.ApplyPreset(preset, True)
         rep.RescaleTransferFunctionToDataRange(False, True)
-    pvs.ResetCamera(view)
+    if opacity_by in arrays:
+        lo, hi = np.percentile(_point_array(ext, opacity_by), opacity_pct)
+        otf = pvs.GetOpacityTransferFunction(opacity_by)
+        otf.Points = [lo, 0.0, 0.5, 0.0, hi, max_opacity, 0.5, 0.0]
+        rep.OpacityByArray = 1
+        rep.OpacityArray = ["POINTS", opacity_by]
+        rep.OpacityTransferFunction = otf
     return ext, rep
+
+
+def _point_array(filt, name):
+    from paraview import servermanager
+    from vtkmodules.util import numpy_support as ns
+    d = servermanager.Fetch(filt)
+    while not hasattr(d, "GetPointData"):  # composite -> first leaf
+        d = d.GetPartitionedDataSet(0).GetPartition(0) if hasattr(d, "GetPartitionedDataSet") else d.GetPartition(0)
+    return ns.vtk_to_numpy(d.GetPointData().GetArray(name)).astype(np.float64)
+
+
+PARTICLE_NAMES = {"Gas": "Gas", "DarkMatter": "Dark matter", "Type2": "Type2", "Type3": "Type3",
+                  "Stars": "Stars", "Type5": "Sinks"}
+
+
+def particle_look(reader, view=None):
+    """One Point Gaussian pipeline item per particle type (own eye each); dark matter
+    starts hidden. Gas is coloured and made opaque by density. Returns {block: extract}."""
+    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    view.UseColorPaletteForBackground = 0
+    view.Background = [0.0, 0.0, 0.0]
+    pvs.Hide(reader, view)
+    made = {}
+    for block in block_names(reader):
+        if block == "Gas":
+            ext, rep = show_particles(reader, block, view, name=PARTICLE_NAMES[block])
+        else:
+            ext, rep = show_particles(reader, block, view, color_by=None, opacity_by=None,
+                                      name=PARTICLE_NAMES.get(block, block))
+            rep.AmbientColor = rep.DiffuseColor = [1.0, 0.9, 0.7] if block in ("Stars", "Type5") \
+                else [0.4, 0.4, 0.6]
+            if block == "DarkMatter":
+                pvs.Hide(ext, view)
+        made[block] = ext
+    pvs.Render(view)
+    return made
 
 
 def map_range(filt, log=True, percentiles=(1.0, 99.9), name=None):
