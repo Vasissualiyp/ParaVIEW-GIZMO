@@ -136,6 +136,7 @@ def test_dense_volume_follows_zoom(series):
     r = pvhelpers.center_on_star(pvs.GIZMOSnapshotReader(FileNames=files[:1]))
     view = pvs.CreateRenderView()
     view.ViewSize = [300, 300]
+    pvs.Show(r, view)  # as in the GUI: the reader's particles are on screen
     pvhelpers.star_camera(view, size=4.0)
     g = pvhelpers.add_dense_volume(r, view, resolution=32)
     assert live.following(g)
@@ -144,7 +145,8 @@ def test_dense_volume_follows_zoom(series):
     assert 0.0 <= lo < 0.5 and hi == pytest.approx(1.0)  # a dense core within a 0-1 scale
     rep = pvs.GetDisplayProperties(g, view)
     assert rep.Representation == "Volume"
-    assert not pvs.GetDisplayProperties(r, view).Visibility  # raw particles hidden
+    from paraview import servermanager as sm
+    assert not sm.GetRepresentation(r, view).Visibility  # raw particles hidden
     assert g.Size == pytest.approx(4.0) and list(g.Center) == pytest.approx([0, 0, 0], abs=1e-9)
     unit = rep.ScalarOpacityUnitDistance
     assert unit == pytest.approx(0.1 * 4.0)
