@@ -144,6 +144,7 @@ def test_dense_volume_follows_zoom(series):
     assert 0.0 <= lo < 0.5 and hi == pytest.approx(1.0)  # a dense core within a 0-1 scale
     rep = pvs.GetDisplayProperties(g, view)
     assert rep.Representation == "Volume"
+    assert not pvs.GetDisplayProperties(r, view).Visibility  # raw particles hidden
     assert g.Size == pytest.approx(4.0) and list(g.Center) == pytest.approx([0, 0, 0], abs=1e-9)
     unit = rep.ScalarOpacityUnitDistance
     assert unit == pytest.approx(0.1 * 4.0)

@@ -370,6 +370,7 @@ def add_dense_volume(source, view=None, block="Gas", field="Masses", resolution=
         live.follow_camera(g, view)
     g.UpdatePipeline()
     name = next(n for n in g.PointData.keys() if n.startswith("scaled_log10_"))
+    pvs.Hide(source, view)  # the raw particles would cover the volume
     rep = pvs.Show(g, view)
     rep.SetRepresentationType("Volume")
     pvs.ColorBy(rep, ("POINTS", name))
