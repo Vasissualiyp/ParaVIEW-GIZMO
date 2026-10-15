@@ -400,3 +400,40 @@ Important limits:
   - No small FIRE snapshot with star particles is available. The only z=0 one
     in COPY (2025-07 `snapdir_590`) is 7.6 GB, so the population path is
     validated on synthetic data plus the pfh C/table comparisons.
+
+## Star-centred movies and dense-gas volumes (2026-10-15)
+
+- **Why zooming overshot in zoom-in runs.** ParaView zooms (wheel, right-drag)
+  toward the camera's focal point. Reset Camera puts that point at the centre of
+  the bounds of everything shown, i.e. the middle of the whole box in a zoom-in
+  run, not the high-resolution region. Each zoom step then slides the region
+  off-screen, and in perspective mode the near clipping plane (a fixed fraction
+  of the far one, set by the whole box) cuts the tiny region away. pvpython also
+  resets the camera on the first `Render()` after import, which silently undid
+  scripted camera setups (`star_camera` now disables that reset).
+- **Fix:** the reader's Recenter = Most massive star puts the star at the
+  origin in every snapshot, in float64 before VTK. `pvhelpers.star_camera`
+  (macro CenterOnStar) puts the focal point and the centre of rotation at the
+  origin and switches to parallel projection, so zooming only changes the scale.
+  Use it instead of Reset Camera. ZoomIn10x/ZoomOut10x step by decades.
+  On m12f `output_cutout/snapshot_259`: 0.01 → 1e-5 kpc in three 10× steps,
+  still centred, with the grid re-gridded in 0.1–0.3 s per step.
+- **CenterParticleID.** "Most massive" can switch between snapshots, which makes
+  the movie jump. Setting the ID (shown in the CenterParticleID field array)
+  follows that one star; if it's absent, the reader falls back to the most
+  massive star.
+- **Dense gas opaque, diffuse gas transparent:** `add_dense_volume` (macro
+  DenseGasVolume) volume-renders a Meshoid Grid of the mass density that
+  follows the camera (centre + zoom; rotation doesn't re-grid). It renders
+  `scaled_log10`, a fixed 0–1 scale, so one opacity curve works everywhere:
+  - automatic: 1 at the densest voxels of the current window, 0 at
+    DynamicRange decades below. Relative to the window, so at deep zoom most of
+    the view counts as "dense";
+  - ScaleRange = (lo, hi): fixed log10 levels in code units. Use these for
+    movies, so the same density gets the same opacity in every frame.
+  Volume opacity is per unit world length, so `live` sets
+  ScalarOpacityUnitDistance = 0.1 × grid size. Otherwise a 100× zoom would make
+  the gas 100× more transparent.
+- Resolution 96 keeps the grid (three float arrays) under ParaView's 20 MB
+  remote-render threshold, so in client-server mode it's delivered and
+  volume-rendered on the local GPU, not with Mesa on the cluster node.

@@ -38,8 +38,11 @@ plugin/              ParaView Python plugins (auto-loaded via PV_PLUGIN_PATH in 
                      "Meshoid Grid" (3D vtkImageData), "Meshoid Derived Fields" (particles)
   SpaceLook.py       Filters > GIZMO: "GIZMO Starlight Image", "Meshoid Composite" (2D RGB maps,
                      follow the camera), "GIZMO Star Properties" (per-star L, colour, size)
-macros/              ParaView macros (Macros > Import new macro): ProjectAlongCamera,
-                     ToggleFollowCamera, GIZMOQuickLook, SpaceLook
+cluster/             Trillium client-server: pvserver.sbatch, connect.sh (tunnel + GUI),
+                     check_remote.py (headless end-to-end check), status.sh
+macros/              ParaView macros (Macros > Import new macro, or copy to
+                     ~/.config/ParaView/Macros): ProjectAlongCamera, ToggleFollowCamera,
+                     GIZMOQuickLook, SpaceLook, CenterOnStar, DenseGasVolume, ZoomIn10x/ZoomOut10x
 tests/               pytest; snapgen.py writes synthetic GIZMO snapshots
 meshoid/             git-ignored local clone (pinned; recreated by the shellHook)
 ```
