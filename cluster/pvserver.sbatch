@@ -4,6 +4,7 @@
 # Submit (from the login node, e.g. through the queue_runner):
 #   sbatch /scratch/vasissua/ParaVIEW/pvserver.sbatch
 # For longer sessions, override on the command line: sbatch -p compute -t 4:00:00 ...
+# The debug partition allows one job per user: a second sbatch fails until the first ends.
 #
 # Writes "<node> <port> <jobid>" to $PV_DIR/pvserver_node.txt once the server is up,
 # so the client can tunnel to it (cluster/connect.sh). pvserver exits whenever a
