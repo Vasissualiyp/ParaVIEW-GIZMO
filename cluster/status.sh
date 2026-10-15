@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # status.sh: queue state of the pvserver jobs -> logs/status.txt (run on the login node).
 PV_DIR=${PV_DIR:-/scratch/vasissua/ParaVIEW}
 {
