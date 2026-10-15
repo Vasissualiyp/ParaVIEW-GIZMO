@@ -7,10 +7,9 @@
 # The debug partition allows one job per user: a second sbatch fails until the first ends.
 #
 # Writes "<node> <port> <jobid>" to $PV_DIR/pvserver_node.txt once the server is up,
-# so the client can tunnel to it (cluster/connect.sh). --multi-clients: a connection
-# left half-open (e.g. a GUI killed behind the ssh tunnel) cannot lock you out. pvserver
-# exits whenever a
-# client disconnects; the loop restarts it, so you can reconnect until the job ends.
+# so the client can tunnel to it (cluster/connect.sh). --multi-clients keeps pvserver
+# accepting connections, so you can reconnect until the job ends, even past a connection
+# left half-open (a GUI killed behind the ssh tunnel). The loop restarts it if it exits.
 #SBATCH --job-name=pvgizmo
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
