@@ -7,7 +7,9 @@
 # The debug partition allows one job per user: a second sbatch fails until the first ends.
 #
 # Writes "<node> <port> <jobid>" to $PV_DIR/pvserver_node.txt once the server is up,
-# so the client can tunnel to it (cluster/connect.sh). pvserver exits whenever a
+# so the client can tunnel to it (cluster/connect.sh). --multi-clients: a connection
+# left half-open (e.g. a GUI killed behind the ssh tunnel) cannot lock you out. pvserver
+# exits whenever a
 # client disconnects; the loop restarts it, so you can reconnect until the job ends.
 #SBATCH --job-name=pvgizmo
 #SBATCH --nodes=1
@@ -29,7 +31,7 @@ while true; do
     apptainer run --containall \
         --bind /scratch:/scratch \
         --bind "$PV_DIR/numba-cache:/tmp/numba-cache" \
-        "$PV_DIR/pvgizmo.sif" --server-port="$PORT" --force-offscreen-rendering
+        "$PV_DIR/pvgizmo.sif" --server-port="$PORT" --force-offscreen-rendering --multi-clients
     echo "== $(date) pvserver exited ($?), restarting"
     sleep 2
 done
