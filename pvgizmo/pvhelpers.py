@@ -11,6 +11,11 @@ import numpy as np
 import paraview.simple as pvs
 
 
+def _view(view=None):
+    from pvgizmo import live
+    return live.render_view(view)
+
+
 def open_snapshot(filenames, **props):
     """GIZMO reader on one file or a list (time series); runs it once so array lists are populated."""
     if isinstance(filenames, str):
@@ -23,7 +28,7 @@ def open_snapshot(filenames, **props):
 
 def camera_window(view=None):
     """(center, normal, view_up, size) of what the camera currently shows, at its focal plane."""
-    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    view = _view(view)
     cam = view.GetActiveCamera()
     pos, focal = np.array(cam.GetPosition()), np.array(cam.GetFocalPoint())
     normal = pos - focal  # line of sight, pointing at the viewer: image right/up = screen right/up
@@ -59,7 +64,7 @@ def show_particles(source, block="Gas", view=None, color_by="log10_Density", opa
     Map Editor. Returns (extract, representation); the extract is renamed `name`
     (default: the block name) so each type has its own eye in the Pipeline Browser.
     """
-    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    view = _view(view)
     ext = pvs.ExtractBlock(Input=source, Selectors=[f"/Root/{block}"])
     pvs.RenameSource(name or block, ext)
     ext.UpdatePipeline()
@@ -105,9 +110,10 @@ PARTICLE_NAMES = {"Gas": "Gas", "DarkMatter": "Dark matter", "Type2": "Type2", "
 
 
 def particle_look(reader, view=None):
-    """One Point Gaussian pipeline item per particle type (own eye each); dark matter
-    starts hidden. Gas is coloured and made opaque by density. Returns {block: extract}."""
-    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    """One pipeline item per particle type (own eye each); dark matter starts hidden.
+    Gas: Point Gaussian, coloured and made opaque by density. Stars/sinks/DM: points of a
+    fixed screen size. Returns {block: extract}."""
+    view = _view(view)
     view.UseColorPaletteForBackground = 0
     view.Background = [0.0, 0.0, 0.0]
     pvs.Hide(reader, view)
@@ -118,6 +124,11 @@ def particle_look(reader, view=None):
         else:
             ext, rep = show_particles(reader, block, view, color_by=None, opacity_by=None,
                                       name=PARTICLE_NAMES.get(block, block))
+            # fixed on-screen size: visible at any zoom (a cluster of sinks can be far
+            # smaller than the gas), editable as Point Size in the Properties panel
+            rep.SetRepresentationType("Points")
+            rep.PointSize = 6.0 if block in ("Stars", "Type5") else 2.0
+            rep.RenderPointsAsSpheres = 1
             rep.AmbientColor = rep.DiffuseColor = [1.0, 0.9, 0.7] if block in ("Stars", "Type5") \
                 else [0.4, 0.4, 0.6]
             if block == "DarkMatter":
@@ -152,7 +163,7 @@ def map_range(filt, log=True, percentiles=(1.0, 99.9), name=None):
 
 def show_map(filt, view=None, log=True, preset="Inferno (matplotlib)", percentiles=(1.0, 99.9)):
     """Show a Meshoid Projection/Slice image with a (log) colour map over robust percentiles."""
-    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    view = _view(view)
     filt.UpdatePipeline()
     name = filt.PointData.keys()[0]
     rep = pvs.Show(filt, view)
@@ -176,7 +187,7 @@ def show_volume(grid, view=None, preset="Inferno (matplotlib)", color_pct=(50.0,
     (Meshoid Grid's AddLog10, on by default). Opacity starts higher (opacity_pct)
     than the colour range (color_pct), so visible voxels are coloured, not black.
     """
-    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    view = _view(view)
     grid.UpdatePipeline()
     names = grid.PointData.keys()
     name = next((n for n in names if n.startswith("log10_")), names[0])
@@ -241,7 +252,7 @@ STAR_ON_TOP = "  gl_FragDepth = 1e-3 * gl_FragCoord.z;\n"
 
 def space_view(view=None):
     """Black background, no orientation axes: the canvas for glowing gas and stars."""
-    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    view = _view(view)
     view.UseColorPaletteForBackground = 0
     view.BackgroundColorMode = "Single Color"
     view.Background = [0.0, 0.0, 0.0]
@@ -251,7 +262,7 @@ def space_view(view=None):
 
 def show_rgb(filt, view=None):
     """Show an RGB map (Starlight Image, Meshoid Composite) with its colours used directly."""
-    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    view = _view(view)
     rep = pvs.Show(filt, view)
     rep.SetRepresentationType("Surface")
     pvs.ColorBy(rep, ("POINTS", "RGB"))
@@ -276,7 +287,7 @@ def show_stars(source, block="Stars", view=None, size_scale=2.0, opacity=1.0, on
     Colour = StarRGB (band ratios: young blue, old red), size grows with log L. on_top: draw
     over maps (images are opaque planes through the focal point). Returns (filter, rep).
     """
-    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    view = _view(view)
     sp = pvs.GIZMOStarProperties(Input=source, Block=block, SizeScale=size_scale, **props)
     ext = pvs.ExtractBlock(Input=sp, Selectors=[f"/Root/{block}"])
     rep = pvs.Show(ext, view)
@@ -374,7 +385,7 @@ def star_camera(view=None, size=None, parallel=True):
     size: visible width (default: the current one).
     """
     from pvgizmo import live
-    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    view = _view(view)
     _, normal, up, cur = live.view_window(view)
     size = float(size or cur)
     w, h = (list(view.ViewSize) + [1, 1])[:2]
@@ -400,7 +411,7 @@ def star_camera(view=None, size=None, parallel=True):
 
 def zoom(factor, view=None):
     """Zoom in by `factor` (> 1) or out (< 1) about the focal point."""
-    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    view = _view(view)
     cam = view.GetActiveCamera()
     if view.CameraParallelProjection:
         cam.SetParallelScale(cam.GetParallelScale() / factor)
@@ -422,7 +433,7 @@ def add_dense_volume(source, view=None, block="Gas", field="Masses", resolution=
     threshold, so a remote grid is still volume-rendered on the local GPU.
     """
     from pvgizmo import live
-    view = view or pvs.GetActiveViewOrCreate("RenderView")
+    view = _view(view)
     g = pvs.MeshoidGrid(Input=source, Block=block, Field=["POINTS", field], Resolution=int(resolution),
                         DynamicRange=float(decades), FollowCamera=int(bool(follow)))
     if follow:

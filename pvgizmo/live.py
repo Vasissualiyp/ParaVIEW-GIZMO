@@ -197,12 +197,29 @@ def set_volume_scale(rep, filt):
         rep.ScalarOpacityUnitDistance = VOLUME_UNIT_FRACTION * size
 
 
-def _active_render_view():
+def render_view(view=None):
+    """A 3D render view to work in, without creating one needlessly.
+
+    `view` if it is a render view; else the active view if it is one; else an existing
+    render view (the active layout's first); only if there is none, a new one. The
+    active view is often a spreadsheet or None in the GUI, and GetActiveViewOrCreate
+    then opens a new, empty layout.
+    """
     pvs = _pvs()
-    v = pvs.GetActiveView()
-    if v is None or v.GetXMLName() != "RenderView":
-        v = pvs.GetActiveViewOrCreate("RenderView")
-    return v
+    for v in (view, pvs.GetActiveView()):
+        if v is not None and v.GetXMLName() == "RenderView":
+            return v
+    views = [v for v in pvs.GetViews() if v.GetXMLName() == "RenderView"]
+    if views:
+        layout = pvs.GetLayout()
+        mine = [v for v in views if layout is not None and pvs.GetLayout(v) == layout]
+        v = (mine or views)[0]
+        pvs.SetActiveView(v)
+        return v
+    return pvs.GetActiveViewOrCreate("RenderView")
+
+
+_active_render_view = render_view
 
 
 def link_for(view):

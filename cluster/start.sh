@@ -3,6 +3,7 @@
 #
 #   cluster/start.sh                       # debug partition, 1 h
 #   cluster/start.sh -p compute -t 4:00:00 # any extra sbatch options
+#   cluster/start.sh --restart             # cancel the running job first (new image)
 #
 # 1. Logs in to Trillium if there is no ssh master connection yet (asks for MFA once;
 #    ControlPersist keeps it for 6 h).
@@ -11,6 +12,8 @@
 #    (cluster/connect.sh).
 set -euo pipefail
 
+RESTART=0
+if [ "${1:-}" = "--restart" ]; then RESTART=1; shift; fi
 HOST=${PV_HOST:-trillium}
 PV_DIR=${PV_DIR:-/scratch/vasissua/ParaVIEW}
 cd "$(dirname "$0")/.."
@@ -21,6 +24,12 @@ if ! ssh -O check "$HOST" 2>/dev/null; then
 fi
 
 read -r NODE PORT JOB < <(ssh "$HOST" cat "$PV_DIR/pvserver_node.txt" 2>/dev/null) || true
+if [ -n "${JOB:-}" ] && [ "$RESTART" = 1 ]; then
+    echo "Cancelling job $JOB"
+    ssh "$HOST" scancel "$JOB" || true
+    while ssh "$HOST" squeue -h -j "$JOB" 2>/dev/null | grep -q .; do sleep 3; done
+    JOB=""
+fi
 if [ -n "${JOB:-}" ] && ssh "$HOST" squeue -h -j "$JOB" -o %T 2>/dev/null | grep -q RUNNING; then
     echo "Reusing running pvserver job $JOB on $NODE"
 else

@@ -197,8 +197,15 @@ class GIZMOSnapshotReader(VTKPythonAlgorithmBase):
             snaps.append((float(io.read_header(parts)["Time"]), parts))
         snaps.sort(key=lambda s: s[0])
         self._snaps = snaps
-        if snaps:  # populate selections from the first snapshot, keeping user choices
-            for t, fields in io.list_fields(snaps[0][1]).items():
+        # Populate selections, keeping user choices. Sample across the series, not just the
+        # first snapshot: sinks/stars (and their fields) often appear only later in a run.
+        sample = sorted(set(np.linspace(0, len(snaps) - 1, min(len(snaps), 8)).astype(int))) if snaps else []
+        merged = {}
+        for i in sample:
+            for t, fields in io.list_fields(snaps[i][1]).items():
+                merged.setdefault(t, {}).update(fields)
+        if merged:
+            for t, fields in sorted(merged.items()):
                 name = io.PTYPE_NAMES[t]
                 if not self._types.ArrayExists(name):
                     self._types.AddArray(name, True)

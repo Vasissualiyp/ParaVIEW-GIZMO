@@ -192,3 +192,33 @@ def test_particle_look(series):
         pvs.Delete(s)
     pvs.Delete(view)
     pvs.Delete(r)
+
+
+def test_types_from_whole_series(tmp_path):
+    """Sinks that form only later in a run must still be offered (and loaded)."""
+    files = []
+    for i in range(3):
+        parts, mtab = snapgen.make_sinks(ngas=500, nsink=5, seed=6)
+        if i == 0:
+            parts.pop(5)  # no sinks yet in the first snapshot
+        base = f"{tmp_path}/snapshot_{i:03d}"
+        snapgen.write_snapshot(base, parts, mtab, time=0.1 * i)
+        files.append(base + ".hdf5")
+    r = pvs.GIZMOSnapshotReader(FileNames=files)
+    r.UpdatePipelineInformation()
+    r.UpdatePipeline(r.TimestepValues[-1])
+    from pvgizmo import pvhelpers as ph
+    assert "Type5" in ph.block_names(r)
+    pvs.Delete(r)
+
+
+def test_render_view_reuses_existing():
+    """Macros must not open a new layout when the active view is a spreadsheet."""
+    rv = pvs.CreateRenderView()
+    sv = pvs.CreateView("SpreadSheetView")
+    pvs.SetActiveView(sv)
+    n = len(pvs.GetViews())
+    assert live.render_view() == rv or live.render_view().GetXMLName() == "RenderView"
+    assert len(pvs.GetViews()) == n
+    pvs.Delete(sv)
+    pvs.Delete(rv)
